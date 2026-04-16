@@ -1,0 +1,26 @@
+node_modules/
+dist/
+.env
+*.log
+*.log.*
+
+# pnpm
+.pnpm-store/
+
+# TypeScript
+*.tsbuildinfo
+
+# Test
+coverage/
+.vitest/
+
+# Claude Code
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docker volumes (local dev)
+postgres_data/
+minio_data/

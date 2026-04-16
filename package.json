@@ -1,0 +1,21 @@
+{
+  "name": "codebase-memory-sync",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Internal code analysis knowledge repository — SCIP-centered multi-repo symbol store",
+  "engines": {
+    "node": ">=20",
+    "pnpm": ">=9"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "dev": "pnpm --parallel -r dev",
+    "test": "pnpm -r test",
+    "lint": "pnpm -r lint",
+    "typecheck": "pnpm -r typecheck",
+    "clean": "pnpm -r clean && rm -rf node_modules"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5"
+  }
+}

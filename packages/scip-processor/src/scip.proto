@@ -1,0 +1,267 @@
+// Minimal SCIP proto definition for decoding purposes.
+// Source: https://github.com/sourcegraph/scip/blob/main/scip.proto (Apache-2.0)
+// Fields used by CMS: documents, occurrences, symbols (definition subset).
+syntax = "proto3";
+package scip;
+
+message Index {
+  Metadata metadata = 1;
+  repeated Document documents = 3;
+  repeated SymbolInformation external_symbols = 4;
+}
+
+message Metadata {
+  ProtocolVersion version = 1;
+  ToolInfo tool_info = 2;
+  string project_root = 3;
+  TextEncoding text_document_encoding = 4;
+}
+
+enum ProtocolVersion {
+  UnspecifiedProtocolVersion = 0;
+}
+
+enum TextEncoding {
+  UnspecifiedTextEncoding = 0;
+  UTF8 = 1;
+  UTF16 = 2;
+}
+
+message ToolInfo {
+  string name = 1;
+  string version = 2;
+  repeated string arguments = 3;
+}
+
+message Document {
+  string language = 4;
+  string relative_path = 1;
+  repeated Occurrence occurrences = 2;
+  repeated SymbolInformation symbols = 3;
+  PositionEncoding position_encoding = 5;
+}
+
+enum PositionEncoding {
+  UnspecifiedPositionEncoding = 0;
+  UTF8CodeUnitOffsetFromLineStart = 1;
+  UTF16CodeUnitOffsetFromLineStart = 2;
+  UTF32CodeUnitOffsetFromLineStart = 3;
+}
+
+message Symbol {
+  string scheme = 1;
+  Package package = 2;
+  repeated Descriptor descriptors = 4;
+}
+
+message Package {
+  string manager = 1;
+  string name = 2;
+  string version = 3;
+}
+
+message Descriptor {
+  string name = 1;
+  string disambiguator = 2;
+  Suffix suffix = 3;
+  enum Suffix {
+    UnspecifiedSuffix = 0;
+    Namespace = 1;
+    Type = 2;
+    Term = 3;
+    Method = 4;
+    TypeParameter = 5;
+    Parameter = 6;
+    Meta = 7;
+    Local = 8;
+    Macro = 9;
+  }
+}
+
+message Occurrence {
+  repeated int32 range = 1 [packed = true];
+  string symbol = 2;
+  int32 symbol_roles = 3;
+  repeated string override_documentation = 4;
+  SyntaxKind syntax_kind = 5;
+  repeated Diagnostic diagnostics = 6;
+  repeated int32 enclosing_range = 7 [packed = true];
+}
+
+enum SymbolRole {
+  UnspecifiedSymbolRole = 0;
+  Definition = 1;
+  Import = 2;
+  WriteAccess = 4;
+  ReadAccess = 8;
+  Generated = 16;
+  Test = 32;
+  ForwardDefinition = 64;
+}
+
+enum SyntaxKind {
+  UnspecifiedSyntaxKind = 0;
+  Comment = 1;
+  PunctuationDelimiter = 2;
+  PunctuationBracket = 3;
+  Keyword = 4;
+  StringLiteral = 5;
+  NumericLiteral = 6;
+  BooleanLiteral = 7;
+  NullLiteral = 8;
+  RegexLiteral = 9;
+  Operator = 10;
+  MagicLiteral = 11;
+  IdentifierBuiltinType = 12;
+  IdentifierBuiltin = 13;
+  IdentifierKeyword = 14;
+  IdentifierOperator = 15;
+  Identifier = 16;
+  IdentifierNullable = 17;
+  IdentifierMacro = 18;
+  IdentifierMacroCall = 19;
+  IdentifierBuiltinAttribute = 20;
+  IdentifierAttribute = 21;
+  IdentifierBuiltinLabel = 22;
+  IdentifierLabel = 23;
+  IdentifierType = 24;
+  IdentifierBuiltinType2 = 25;
+  IdentifierInterface = 26;
+  IdentifierBuiltinInterface = 27;
+  IdentifierTypeParameter = 28;
+  IdentifierBuiltinTypeParameter = 29;
+  IdentifierModule = 30;
+  IdentifierBuiltinModule = 31;
+  IdentifierFunction = 32;
+  IdentifierBuiltinFunction = 33;
+  IdentifierFunctionDefinition = 34;
+  IdentifierMacroDefinition = 35;
+  IdentifierVariable = 36;
+  IdentifierBuiltinVariable = 37;
+  IdentifierVariableDefinition = 38;
+  IdentifierParameter = 39;
+  IdentifierBuiltinParameter = 40;
+  IdentifierLocal = 41;
+  IdentifierShadowed = 42;
+  IdentifierNamespace = 43;
+  IdentifierBuiltinNamespace = 44;
+  Tag = 45;
+  TagAttribute = 46;
+  TagDelimiter = 47;
+}
+
+message SymbolInformation {
+  string symbol = 1;
+  repeated string documentation = 3;
+  repeated Relationship relationships = 4;
+  Kind kind = 5;
+  string display_name = 6;
+  Document signature_documentation = 7;
+  string enclosing_symbol = 8;
+
+  enum Kind {
+    UnspecifiedKind = 0;
+    AbstractMethod = 1;
+    Accessor = 2;
+    Array = 3;
+    Assertion = 4;
+    Association = 5;
+    Attribute = 6;
+    Axiom = 7;
+    Boolean = 8;
+    Class = 9;
+    Constant = 10;
+    Constructor = 11;
+    DataFamily = 12;
+    Delegate = 13;
+    Enum = 14;
+    EnumMember = 15;
+    ErrorCode = 16;
+    Event = 17;
+    ExtensionMethod = 18;
+    Fact = 19;
+    Field = 20;
+    File = 21;
+    Function = 22;
+    Getter = 23;
+    Grammar = 24;
+    Instance = 25;
+    Interface = 26;
+    Key = 27;
+    Lang = 28;
+    Lemma = 29;
+    Local = 30;
+    Macro = 31;
+    Method = 32;
+    MessageType = 33;
+    Modifier = 34;
+    Module = 35;
+    Namespace = 36;
+    Null = 37;
+    Number = 38;
+    Object = 39;
+    Operator = 40;
+    Package = 41;
+    PackageObject = 42;
+    Parameter = 43;
+    ParameterLabel = 44;
+    Pattern = 45;
+    Predicate = 46;
+    Property = 47;
+    Protocol = 48;
+    PureVirtualMethod = 49;
+    QuasiQuoter = 50;
+    Setter = 51;
+    Signature = 52;
+    SingleTypeParameter = 53;
+    StaticDataMember = 54;
+    StaticEvent = 55;
+    StaticField = 56;
+    StaticMethod = 57;
+    StaticProperty = 58;
+    StaticVariable = 59;
+    String = 60;
+    Struct = 61;
+    Subscript = 62;
+    Tactic = 63;
+    Theorem = 64;
+    Trait = 65;
+    Type = 66;
+    TypeAlias = 67;
+    TypeClass = 68;
+    TypeClassMethod = 69;
+    Union = 70;
+    Value = 71;
+    Variable = 72;
+  }
+}
+
+message Relationship {
+  string symbol = 1;
+  bool is_reference = 2;
+  bool is_implementation = 3;
+  bool is_type_definition = 4;
+  bool is_definition = 5;
+}
+
+message Diagnostic {
+  Severity severity = 1;
+  string code = 2;
+  string message = 3;
+  string source = 4;
+  repeated DiagnosticTag tags = 5;
+}
+
+enum Severity {
+  UnspecifiedSeverity = 0;
+  Error = 1;
+  Warning = 2;
+  Information = 3;
+  Hint = 4;
+}
+
+enum DiagnosticTag {
+  UnspecifiedDiagnosticTag = 0;
+  Unnecessary = 1;
+  Deprecated = 2;
+}
