@@ -174,7 +174,7 @@
 ---
 
 ### Phase 2b — SCIP relationships + MCP tool 3개 추가 (2026-04-17)
-**커밋**: (pending)
+**커밋**: `c53fb08 feat: Phase 2b SCIP relationships + MCP tools — find_implementors, get_dependencies, get_impact_analysis`
 
 #### 핵심 성과
 
