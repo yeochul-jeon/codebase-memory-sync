@@ -127,7 +127,7 @@
 ---
 
 ### Phase 2a — MCP tool 2개 추가 (2026-04-17)
-**커밋**: (pending)
+**커밋**: `91f34da feat: Phase 2a MCP tools — get_symbol_references + get_file_overview`
 
 #### 핵심 성과
 
