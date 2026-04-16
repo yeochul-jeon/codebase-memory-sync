@@ -11,6 +11,9 @@ import { searchRoutes } from "./routes/search.js";
 import { symbolsRoutes } from "./routes/symbols.js";
 import { symbolReferencesRoutes } from "./routes/symbol-references.js";
 import { fileOverviewRoutes } from "./routes/file-overview.js";
+import { implementorsRoutes } from "./routes/implementors.js";
+import { dependenciesRoutes } from "./routes/dependencies.js";
+import { impactRoutes } from "./routes/impact.js";
 
 const app = Fastify({
   logger: {
@@ -38,6 +41,9 @@ await app.register(searchRoutes);
 await app.register(symbolsRoutes);
 await app.register(symbolReferencesRoutes);
 await app.register(fileOverviewRoutes);
+await app.register(implementorsRoutes);
+await app.register(dependenciesRoutes);
+await app.register(impactRoutes);
 
 // Graceful shutdown
 const shutdown = async (signal: string): Promise<void> => {

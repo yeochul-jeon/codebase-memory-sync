@@ -107,6 +107,72 @@ export interface FileOverviewResult {
   symbols: FileSymbol[];
 }
 
+export interface RelationshipQueryParams {
+  repo?: string;
+  limit?: number;
+}
+
+export interface ImpactQueryParams extends RelationshipQueryParams {
+  depth?: number;
+}
+
+export interface ImplementorEntry {
+  from_symbol: string;
+  display_name: string | null;
+  kind: string | null;
+  file_path: string | null;
+  start_line: number | null;
+  repo: string;
+  commit_sha: string;
+}
+
+export interface ImplementorsResult {
+  scip_symbol: string;
+  total: number;
+  truncated: boolean;
+  implementors: ImplementorEntry[];
+}
+
+export interface DependencyEntry {
+  to_symbol: string;
+  display_name: string | null;
+  kind: string | null;
+  file_path: string | null;
+  start_line: number | null;
+  is_reference: boolean;
+  is_implementation: boolean;
+  is_type_definition: boolean;
+  is_definition: boolean;
+  repo: string;
+  commit_sha: string;
+}
+
+export interface DependenciesResult {
+  scip_symbol: string;
+  total: number;
+  truncated: boolean;
+  dependencies: DependencyEntry[];
+}
+
+export interface ImpactEntry {
+  symbol: string;
+  display_name: string | null;
+  kind: string | null;
+  file_path: string | null;
+  start_line: number | null;
+  depth: number;
+  repo: string | null;
+  commit_sha: string | null;
+}
+
+export interface ImpactResult {
+  scip_symbol: string;
+  depth: number;
+  total: number;
+  truncated: boolean;
+  impacted: ImpactEntry[];
+}
+
 export class CmsClient {
   private readonly base: string;
   private readonly token: string | undefined;
@@ -180,5 +246,54 @@ export class CmsClient {
     if (res.status === 404) return null;
     if (!res.ok) throw new Error(`getFileOverview failed: ${res.status}`);
     return res.json() as Promise<FileOverviewResult>;
+  }
+
+  async findImplementors(
+    scipSymbol: string,
+    params?: RelationshipQueryParams
+  ): Promise<ImplementorsResult | null> {
+    const qs = new URLSearchParams({ scip_symbol: scipSymbol });
+    if (params?.repo) qs.set("repo", params.repo);
+    if (params?.limit != null) qs.set("limit", String(params.limit));
+    const res = await fetch(
+      `${this.base}/v1/symbols/implementors?${qs.toString()}`,
+      { headers: this.headers() }
+    );
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`findImplementors failed: ${res.status}`);
+    return res.json() as Promise<ImplementorsResult>;
+  }
+
+  async getDependencies(
+    scipSymbol: string,
+    params?: RelationshipQueryParams
+  ): Promise<DependenciesResult | null> {
+    const qs = new URLSearchParams({ scip_symbol: scipSymbol });
+    if (params?.repo) qs.set("repo", params.repo);
+    if (params?.limit != null) qs.set("limit", String(params.limit));
+    const res = await fetch(
+      `${this.base}/v1/symbols/dependencies?${qs.toString()}`,
+      { headers: this.headers() }
+    );
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`getDependencies failed: ${res.status}`);
+    return res.json() as Promise<DependenciesResult>;
+  }
+
+  async getImpactAnalysis(
+    scipSymbol: string,
+    params?: ImpactQueryParams
+  ): Promise<ImpactResult | null> {
+    const qs = new URLSearchParams({ scip_symbol: scipSymbol });
+    if (params?.repo) qs.set("repo", params.repo);
+    if (params?.depth != null) qs.set("depth", String(params.depth));
+    if (params?.limit != null) qs.set("limit", String(params.limit));
+    const res = await fetch(
+      `${this.base}/v1/symbols/impact?${qs.toString()}`,
+      { headers: this.headers() }
+    );
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`getImpactAnalysis failed: ${res.status}`);
+    return res.json() as Promise<ImpactResult>;
   }
 }

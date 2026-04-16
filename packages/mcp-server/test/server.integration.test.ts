@@ -49,7 +49,7 @@ afterAll(async () => {
 });
 
 describe("MCP server integration", () => {
-  it("exposes expected tools including v1 additions", async () => {
+  it("exposes expected tools including v1 + v2b additions", async () => {
     if (!available) { console.warn("Skipping — core-service not reachable"); return; }
     const tools = await client.listTools();
     const names = tools.tools.map(t => t.name);
@@ -58,6 +58,9 @@ describe("MCP server integration", () => {
     expect(names).toContain("get_symbol_detail");
     expect(names).toContain("get_symbol_references");
     expect(names).toContain("get_file_overview");
+    expect(names).toContain("find_implementors");
+    expect(names).toContain("get_dependencies");
+    expect(names).toContain("get_impact_analysis");
   });
 
   it("list_projects returns text content", async () => {
@@ -110,5 +113,38 @@ describe("MCP server integration", () => {
     const content = result.content as Array<{ type: string; text: string }>;
     expect(content[0]!.type).toBe("text");
     expect(typeof content[0]!.text).toBe("string");
+  });
+
+  it("find_implementors with unknown symbol returns no-implementors text", async () => {
+    if (!available) return;
+    const result = await client.callTool({
+      name: "find_implementors",
+      arguments: { scip_symbol: "scip-unknown nonexistent interface." },
+    });
+    const content = result.content as Array<{ type: string; text: string }>;
+    expect(content[0]!.type).toBe("text");
+    expect(content[0]!.text).toContain("No implementors found");
+  });
+
+  it("get_dependencies with unknown symbol returns no-dependencies text", async () => {
+    if (!available) return;
+    const result = await client.callTool({
+      name: "get_dependencies",
+      arguments: { scip_symbol: "scip-unknown nonexistent symbol." },
+    });
+    const content = result.content as Array<{ type: string; text: string }>;
+    expect(content[0]!.type).toBe("text");
+    expect(content[0]!.text).toContain("No dependencies found");
+  });
+
+  it("get_impact_analysis with unknown symbol returns no-dependents text", async () => {
+    if (!available) return;
+    const result = await client.callTool({
+      name: "get_impact_analysis",
+      arguments: { scip_symbol: "scip-unknown nonexistent symbol." },
+    });
+    const content = result.content as Array<{ type: string; text: string }>;
+    expect(content[0]!.type).toBe("text");
+    expect(content[0]!.text).toContain("No dependents found");
   });
 });

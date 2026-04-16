@@ -113,3 +113,38 @@ CREATE TABLE IF NOT EXISTS audit_log (
 
 CREATE INDEX IF NOT EXISTS idx_audit_ts      ON audit_log (ts DESC);
 CREATE INDEX IF NOT EXISTS idx_audit_repo_id ON audit_log (repo_id);
+
+-- ── symbol_relationships ─────────────────────────────────────────────────────
+-- Extracted from SCIP SymbolInformation.relationships[].
+-- Edge direction: from_symbol (declarer) → to_symbol (target).
+-- e.g. "class FooImpl implements IFoo":
+--   from_symbol = 'scip-java...FooImpl#', to_symbol = 'scip-java...IFoo#',
+--   is_implementation = true
+CREATE TABLE IF NOT EXISTS symbol_relationships (
+  id                  UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  index_id            UUID NOT NULL REFERENCES indexes(id) ON DELETE CASCADE,
+  repo_id             UUID NOT NULL,
+  commit_sha          TEXT NOT NULL,
+  from_symbol         TEXT NOT NULL,
+  to_symbol           TEXT NOT NULL,
+  is_reference        BOOLEAN NOT NULL DEFAULT false,
+  is_implementation   BOOLEAN NOT NULL DEFAULT false,
+  is_type_definition  BOOLEAN NOT NULL DEFAULT false,
+  is_definition       BOOLEAN NOT NULL DEFAULT false
+);
+
+-- find_implementors: WHERE to_symbol = X AND is_implementation = true
+CREATE INDEX IF NOT EXISTS idx_symrel_to_impl
+  ON symbol_relationships (to_symbol, is_implementation);
+
+-- get_dependencies: WHERE from_symbol = X
+CREATE INDEX IF NOT EXISTS idx_symrel_from
+  ON symbol_relationships (from_symbol);
+
+-- get_impact_analysis seed: WHERE to_symbol = X
+CREATE INDEX IF NOT EXISTS idx_symrel_to
+  ON symbol_relationships (to_symbol);
+
+-- repo-scoped queries
+CREATE INDEX IF NOT EXISTS idx_symrel_repo
+  ON symbol_relationships (repo_id, commit_sha);

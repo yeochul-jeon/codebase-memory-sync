@@ -173,13 +173,77 @@
 
 ---
 
+### Phase 2b — SCIP relationships + MCP tool 3개 추가 (2026-04-17)
+**커밋**: (pending)
+
+#### 핵심 성과
+
+| 항목 | 내용 |
+|------|------|
+| 검증 결과 | typecheck 0 errors, vitest 109/109 pass (scip-processor 13, core-service 46, mcp-server 50) |
+| 신규 파일 | 16개 |
+
+#### 구현 내역
+
+**`packages/scip-processor` — SCIP relationships 파싱**
+
+| 파일 | 역할 |
+|------|------|
+| `src/parser.ts` | `ParsedRelationship` 인터페이스 + `ParsedIndex.relationships` 필드 + 파싱 루프 추가 |
+| `src/materialize.ts` | `symbol_relationships` 삭제 + bulk-insert 블록 추가 |
+| `test/parser.relationships.test.ts` | 관계 파싱 단위 테스트 5개 (신규) |
+| `test/materialize.relationships.test.ts` | 관계 materialize 통합 테스트 2개 (신규) |
+
+**`packages/core-service` — REST 라우트 3개 추가**
+
+| 파일 | 역할 |
+|------|------|
+| `src/storage/schema.sql` | `symbol_relationships` 테이블 + 인덱스 4개 추가 |
+| `src/routes/implementors.ts` | `GET /v1/symbols/implementors` — is_implementation 관계 기반 구현체 목록 (신규) |
+| `src/routes/dependencies.ts` | `GET /v1/symbols/dependencies` — from_symbol 기반 직접 의존 목록 (신규) |
+| `src/routes/impact.ts` | `GET /v1/symbols/impact` — 재귀 CTE + cycle detection, depth cap 5 (신규) |
+| `src/server.ts` | 3개 route 등록 추가 |
+| `test/routes/implementors.test.ts` | 통합 테스트 7개 (신규) |
+| `test/routes/dependencies.test.ts` | 통합 테스트 7개 (신규) |
+| `test/routes/impact.test.ts` | 통합 테스트 8개 (신규, depth/cycle 포함) |
+
+**`packages/mcp-server` — MCP tool 3개 추가**
+
+| 파일 | 역할 |
+|------|------|
+| `src/client.ts` | `ImplementorsResult`, `DependenciesResult`, `ImpactResult` 등 6개 타입 + 3개 메서드 추가 |
+| `src/tools/find-implementors.ts` | `find_implementors` pure handler (신규) |
+| `src/tools/get-dependencies.ts` | `get_dependencies` pure handler (신규) |
+| `src/tools/get-impact-analysis.ts` | `get_impact_analysis` pure handler (신규) |
+| `src/server.ts` | 3개 tool 등록 추가 |
+| `test/tools/find-implementors.test.ts` | 단위 테스트 5개 (신규) |
+| `test/tools/get-dependencies.test.ts` | 단위 테스트 5개 (신규) |
+| `test/tools/get-impact-analysis.test.ts` | 단위 테스트 5개 (신규) |
+| `test/server.integration.test.ts` | 3개 roundtrip case 추가, tool name assertion 8개로 확대 |
+
+**MCP Tool 명세 (Phase 2b 추가)**
+
+| Tool | 입력 | 출력 |
+|------|------|------|
+| `find_implementors` | `{ scip_symbol, repo?, limit? }` | 인터페이스 구현체 목록 (class/kind/file:line) |
+| `get_dependencies` | `{ scip_symbol, repo?, limit? }` | 직접 의존 심볼 목록 (관계 타입 태그 포함) |
+| `get_impact_analysis` | `{ scip_symbol, repo?, depth?, limit? }` | 역방향 재귀 의존 목록 (depth 레벨 포함) |
+
+**보류 결정**
+- `read_symbol_body`, `read_file_range` — 원본 소스 저장 파이프라인 없음 → Phase 2c 별도 설계
+
+---
+
 ## 현재 상태
 
 ```
 packages/
-├── core-service/     ✅ REST API (upload, repos, symbols, symbol-references, file-overview, search, indexes, health)
-├── scip-processor/   ✅ SCIP → Postgres worker
-├── mcp-server/       ✅ MCP stdio (list_projects, search_symbols, get_symbol_detail, get_symbol_references, get_file_overview)
+├── core-service/     ✅ REST API (upload, repos, symbols, symbol-references, file-overview, search,
+│                                  indexes, health, implementors, dependencies, impact)
+├── scip-processor/   ✅ SCIP → Postgres worker (relationships 파싱 포함)
+├── mcp-server/       ✅ MCP stdio (list_projects, search_symbols, get_symbol_detail,
+│                                  get_symbol_references, get_file_overview,
+│                                  find_implementors, get_dependencies, get_impact_analysis)
 └── ci-lib/           ✅ Jenkins shared library 스캐폴딩
 ```
 
@@ -187,9 +251,9 @@ packages/
 
 | 패키지 | 테스트 수 | 종류 |
 |--------|----------|------|
-| `core-service` | 24개 | 라우트 통합 (app.inject) |
-| `scip-processor` | 6개 | 단위 + E2E |
-| `mcp-server` | 32개 | 단위 26개 + stdio roundtrip 통합 6개 |
+| `core-service` | 46개 | 라우트 통합 (app.inject) |
+| `scip-processor` | 13개 | 단위 + E2E + 관계 통합 |
+| `mcp-server` | 50개 | 단위 41개 + stdio roundtrip 통합 9개 |
 
 ---
 
@@ -199,7 +263,7 @@ packages/
 
 | 항목 | 내용 | 우선순위 |
 |------|------|---------|
-| MCP tool 추가 | `get_symbol_references`, `find_implementors`, `get_impact_analysis`, `get_file_overview`, `get_dependencies`, `read_symbol_body`, `read_file_range` | 높음 |
+| MCP tool 추가 | `read_symbol_body`, `read_file_range` (Phase 2c — 원본 소스 파이프라인 설계 필요) | 높음 |
 | scip-typescript 지원 | Nuxt/Next 저장소 인덱싱 | 높음 |
 | Memory tools | `write/read/list/edit/delete_memory` (저장소 단위 공유 노트) | 중간 |
 | Zoekt 사이드카 | `code_search` tool — 전문 텍스트/regex 검색 | 중간 |

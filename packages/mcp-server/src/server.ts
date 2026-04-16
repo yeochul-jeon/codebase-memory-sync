@@ -6,6 +6,9 @@ import { handleSearchSymbols } from "./tools/search-symbols.js";
 import { handleGetSymbolDetail } from "./tools/get-symbol-detail.js";
 import { handleGetSymbolReferences } from "./tools/get-symbol-references.js";
 import { handleGetFileOverview } from "./tools/get-file-overview.js";
+import { handleFindImplementors } from "./tools/find-implementors.js";
+import { handleGetDependencies } from "./tools/get-dependencies.js";
+import { handleGetImpactAnalysis } from "./tools/get-impact-analysis.js";
 
 export function createMcpServer(cmsClient: CmsClient): McpServer {
   const server = new McpServer({
@@ -131,6 +134,110 @@ export function createMcpServer(cmsClient: CmsClient): McpServer {
           ...(args.include_definitions !== undefined
             ? { include_definitions: args.include_definitions }
             : {}),
+          limit: args.limit,
+        }
+      )
+  );
+
+  // ── find_implementors ────────────────────────────────────────────────────────
+  server.registerTool(
+    "find_implementors",
+    {
+      description:
+        "Find all concrete classes/types that implement or extend a given interface or abstract class.",
+      inputSchema: {
+        scip_symbol: z
+          .string()
+          .min(1)
+          .describe("Canonical SCIP symbol string of the interface or abstract class"),
+        repo: z.string().optional().describe("Filter by repo in 'org/name' format"),
+        limit: z
+          .number()
+          .int()
+          .positive()
+          .max(500)
+          .default(50)
+          .describe("Max results to return (default 50, max 500)"),
+      },
+    },
+    async (args) =>
+      handleFindImplementors(
+        { findImplementors: (sym, p) => cmsClient.findImplementors(sym, p) },
+        {
+          scip_symbol: args.scip_symbol,
+          ...(args.repo !== undefined ? { repo: args.repo } : {}),
+          limit: args.limit,
+        }
+      )
+  );
+
+  // ── get_dependencies ─────────────────────────────────────────────────────────
+  server.registerTool(
+    "get_dependencies",
+    {
+      description:
+        "Get all symbols that a given symbol directly depends on (calls, imports, extends, implements).",
+      inputSchema: {
+        scip_symbol: z
+          .string()
+          .min(1)
+          .describe("Canonical SCIP symbol string"),
+        repo: z.string().optional().describe("Filter by repo in 'org/name' format"),
+        limit: z
+          .number()
+          .int()
+          .positive()
+          .max(500)
+          .default(50)
+          .describe("Max results to return (default 50, max 500)"),
+      },
+    },
+    async (args) =>
+      handleGetDependencies(
+        { getDependencies: (sym, p) => cmsClient.getDependencies(sym, p) },
+        {
+          scip_symbol: args.scip_symbol,
+          ...(args.repo !== undefined ? { repo: args.repo } : {}),
+          limit: args.limit,
+        }
+      )
+  );
+
+  // ── get_impact_analysis ──────────────────────────────────────────────────────
+  server.registerTool(
+    "get_impact_analysis",
+    {
+      description:
+        "Find all symbols that transitively depend on the given symbol (reverse dependency / impact analysis). Use this to understand the blast radius of changing a symbol.",
+      inputSchema: {
+        scip_symbol: z
+          .string()
+          .min(1)
+          .describe("Canonical SCIP symbol string"),
+        repo: z.string().optional().describe("Filter by repo in 'org/name' format"),
+        depth: z
+          .number()
+          .int()
+          .min(1)
+          .max(5)
+          .default(3)
+          .describe("Max traversal depth (default 3, max 5)"),
+        limit: z
+          .number()
+          .int()
+          .positive()
+          .max(500)
+          .default(50)
+          .describe("Max results to return (default 50, max 500)"),
+      },
+    },
+    async (args) =>
+      handleGetImpactAnalysis(
+        { getImpactAnalysis: (sym, p) => cmsClient.getImpactAnalysis(sym, p) },
+        {
+          scip_symbol: args.scip_symbol,
+          ...(args.repo !== undefined ? { repo: args.repo } : {}),
+          depth: args.depth,
           limit: args.limit,
         }
       )

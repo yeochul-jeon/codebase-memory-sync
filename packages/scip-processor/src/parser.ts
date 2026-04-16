@@ -41,9 +41,19 @@ export interface ParsedOccurrence {
   role: number;
 }
 
+export interface ParsedRelationship {
+  from_symbol: string;
+  to_symbol: string;
+  is_reference: boolean;
+  is_implementation: boolean;
+  is_type_definition: boolean;
+  is_definition: boolean;
+}
+
 export interface ParsedIndex {
   symbols: ParsedSymbol[];
   occurrences: ParsedOccurrence[];
+  relationships: ParsedRelationship[];
 }
 
 function decodeRange(range: number[]): [number, number, number, number] {
@@ -94,11 +104,20 @@ interface RawOccurrence {
   symbolRoles?: number;
 }
 
+interface RawRelationship {
+  symbol?: string;
+  isReference?: boolean;
+  isImplementation?: boolean;
+  isTypeDefinition?: boolean;
+  isDefinition?: boolean;
+}
+
 interface RawSymbolInfo {
   symbol?: string;
   displayName?: string;
   kind?: number;
   documentation?: string[];
+  relationships?: RawRelationship[];
 }
 
 interface RawDocument {
@@ -126,6 +145,7 @@ export async function parseScip(buffer: Buffer): Promise<ParsedIndex> {
 
   const symbols: ParsedSymbol[] = [];
   const occurrences: ParsedOccurrence[] = [];
+  const relationships: ParsedRelationship[] = [];
 
   for (const doc of rawIndex.documents ?? []) {
     const language = doc.language ?? "";
@@ -140,6 +160,22 @@ export async function parseScip(buffer: Buffer): Promise<ParsedIndex> {
         kind: si.kind ?? 0,
         docs: si.documentation ?? [],
       });
+
+      // Extract relationships
+      const fromSym = sym;
+      if (!fromSym || fromSym.startsWith("local ")) continue;
+      for (const rel of si.relationships ?? []) {
+        const toSym = rel.symbol ?? "";
+        if (!toSym || toSym.startsWith("local ")) continue;
+        relationships.push({
+          from_symbol: fromSym,
+          to_symbol: toSym,
+          is_reference: rel.isReference ?? false,
+          is_implementation: rel.isImplementation ?? false,
+          is_type_definition: rel.isTypeDefinition ?? false,
+          is_definition: rel.isDefinition ?? false,
+        });
+      }
     }
 
     // Process occurrences
@@ -181,5 +217,5 @@ export async function parseScip(buffer: Buffer): Promise<ParsedIndex> {
     }
   }
 
-  return { symbols, occurrences };
+  return { symbols, occurrences, relationships };
 }
