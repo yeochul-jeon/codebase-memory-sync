@@ -49,13 +49,15 @@ afterAll(async () => {
 });
 
 describe("MCP server integration", () => {
-  it("exposes 3 tools", async () => {
+  it("exposes expected tools including v1 additions", async () => {
     if (!available) { console.warn("Skipping — core-service not reachable"); return; }
     const tools = await client.listTools();
     const names = tools.tools.map(t => t.name);
     expect(names).toContain("list_projects");
     expect(names).toContain("search_symbols");
     expect(names).toContain("get_symbol_detail");
+    expect(names).toContain("get_symbol_references");
+    expect(names).toContain("get_file_overview");
   });
 
   it("list_projects returns text content", async () => {
@@ -86,5 +88,27 @@ describe("MCP server integration", () => {
     });
     const content = result.content as Array<{ type: string; text: string }>;
     expect(content[0]!.text).toContain("Symbol not found");
+  });
+
+  it("get_symbol_references with unknown symbol returns no-references text", async () => {
+    if (!available) return;
+    const result = await client.callTool({
+      name: "get_symbol_references",
+      arguments: { scip_symbol: "scip-unknown nonexistent symbol." },
+    });
+    const content = result.content as Array<{ type: string; text: string }>;
+    expect(content[0]!.type).toBe("text");
+    expect(content[0]!.text).toContain("No references found");
+  });
+
+  it("get_file_overview with unknown file returns no-symbols text", async () => {
+    if (!available) return;
+    const result = await client.callTool({
+      name: "get_file_overview",
+      arguments: { repo: "nonexistent/repo", file_path: "src/unknown.ts" },
+    });
+    const content = result.content as Array<{ type: string; text: string }>;
+    expect(content[0]!.type).toBe("text");
+    expect(typeof content[0]!.text).toBe("string");
   });
 });

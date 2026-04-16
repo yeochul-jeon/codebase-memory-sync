@@ -65,6 +65,48 @@ export interface SearchParams {
   limit?: number;
 }
 
+export interface SymbolReferencesParams {
+  repo?: string;
+  include_definitions?: boolean;
+  limit?: number;
+}
+
+export interface SymbolReferencesResult {
+  scip_symbol: string;
+  repo: string;
+  commit_sha: string;
+  total: number;
+  truncated: boolean;
+  occurrences: OccurrenceInfo[];
+}
+
+export interface FileOverviewParams {
+  repo: string;
+  file_path: string;
+  commit?: string;
+}
+
+export interface FileSymbol {
+  scip_symbol: string;
+  display_name: string | null;
+  kind: string | null;
+  language: string | null;
+  start_line: number | null;
+  start_col: number | null;
+  end_line: number | null;
+  end_col: number | null;
+  signature: string | null;
+  doc: string | null;
+}
+
+export interface FileOverviewResult {
+  repo: string;
+  commit_sha: string;
+  file_path: string;
+  total: number;
+  symbols: FileSymbol[];
+}
+
 export class CmsClient {
   private readonly base: string;
   private readonly token: string | undefined;
@@ -104,5 +146,39 @@ export class CmsClient {
     if (res.status === 404) return null;
     if (!res.ok) throw new Error(`getSymbolDetail failed: ${res.status}`);
     return res.json() as Promise<SymbolDetail>;
+  }
+
+  async getSymbolReferences(
+    scipSymbol: string,
+    params?: SymbolReferencesParams
+  ): Promise<SymbolReferencesResult | null> {
+    const qs = new URLSearchParams({ scip_symbol: scipSymbol });
+    if (params?.repo) qs.set("repo", params.repo);
+    if (params?.include_definitions) qs.set("include_definitions", "true");
+    if (params?.limit != null) qs.set("limit", String(params.limit));
+    const res = await fetch(
+      `${this.base}/v1/symbols/references?${qs.toString()}`,
+      { headers: this.headers() }
+    );
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`getSymbolReferences failed: ${res.status}`);
+    return res.json() as Promise<SymbolReferencesResult>;
+  }
+
+  async getFileOverview(
+    params: FileOverviewParams
+  ): Promise<FileOverviewResult | null> {
+    const qs = new URLSearchParams({
+      repo: params.repo,
+      file_path: params.file_path,
+    });
+    if (params.commit) qs.set("commit", params.commit);
+    const res = await fetch(
+      `${this.base}/v1/files/overview?${qs.toString()}`,
+      { headers: this.headers() }
+    );
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`getFileOverview failed: ${res.status}`);
+    return res.json() as Promise<FileOverviewResult>;
   }
 }
