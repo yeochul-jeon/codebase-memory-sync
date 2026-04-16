@@ -3,9 +3,9 @@ import { getPool } from "../storage/postgres.js";
 
 export async function searchRoutes(app: FastifyInstance): Promise<void> {
   app.get<{
-    Querystring: { q: string; repo?: string; lang?: string; limit?: string };
+    Querystring: { q: string; repo?: string; lang?: string; kind?: string; limit?: string };
   }>("/v1/search", async (request, reply) => {
-    const { q, repo, lang } = request.query;
+    const { q, repo, lang, kind } = request.query;
     const limit = Math.min(parseInt(request.query.limit ?? "50", 10), 200);
 
     if (!q || q.trim().length === 0) {
@@ -16,8 +16,9 @@ export async function searchRoutes(app: FastifyInstance): Promise<void> {
     const conditions: string[] = [];
 
     // Full-text prefix search on display_name
+    // Note: $N || ':*' builds a valid prefix tsquery from the param string
     params.push(q.trim());
-    conditions.push(`to_tsvector('simple', COALESCE(s.display_name, '')) @@ to_tsquery('simple', $${params.length}:*)`);
+    conditions.push(`to_tsvector('simple', COALESCE(s.display_name, '')) @@ to_tsquery('simple', $${params.length} || ':*')`);
 
     if (repo) {
       const slashIdx = repo.indexOf("/");
@@ -32,6 +33,11 @@ export async function searchRoutes(app: FastifyInstance): Promise<void> {
     if (lang) {
       params.push(lang);
       conditions.push(`s.language = $${params.length}`);
+    }
+
+    if (kind) {
+      params.push(kind);
+      conditions.push(`s.kind = $${params.length}`);
     }
 
     const where = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";

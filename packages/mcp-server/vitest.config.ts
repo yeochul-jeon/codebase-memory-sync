@@ -3,10 +3,8 @@ import { defineConfig } from "vitest/config";
 export default defineConfig({
   test: {
     environment: "node",
-    include: ["test/**/*.test.ts"],
-    globals: false,
     env: {
-      POSTGRES_PASSWORD: "cms_dev_pass",
+      CMS_ENDPOINT: "http://localhost:3000",
     },
   },
 });

@@ -8,6 +8,7 @@ import { uploadRoutes } from "./routes/upload.js";
 import { reposRoutes } from "./routes/repos.js";
 import { indexesRoutes } from "./routes/indexes.js";
 import { searchRoutes } from "./routes/search.js";
+import { symbolsRoutes } from "./routes/symbols.js";
 
 const app = Fastify({
   logger: {
@@ -32,6 +33,7 @@ await app.register(uploadRoutes);
 await app.register(reposRoutes);
 await app.register(indexesRoutes);
 await app.register(searchRoutes);
+await app.register(symbolsRoutes);
 
 // Graceful shutdown
 const shutdown = async (signal: string): Promise<void> => {

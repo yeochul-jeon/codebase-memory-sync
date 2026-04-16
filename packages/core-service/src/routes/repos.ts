@@ -2,6 +2,40 @@ import type { FastifyInstance } from "fastify";
 import { getPool } from "../storage/postgres.js";
 
 export async function reposRoutes(app: FastifyInstance): Promise<void> {
+  // List all repos with their latest indexed heads
+  app.get("/v1/repos", async (_request, reply) => {
+    const pool = getPool();
+    const res = await pool.query<{
+      id: string;
+      org: string;
+      name: string;
+      default_branch: string;
+      primary_lang: string | null;
+      created_at: string;
+      heads: Array<{ branch: string; commit_sha: string; indexed_at: string }> | null;
+    }>(
+      `SELECT r.id, r.org, r.name, r.default_branch, r.primary_lang, r.created_at,
+              json_agg(
+                json_build_object(
+                  'branch', rh.branch,
+                  'commit_sha', rh.commit_sha,
+                  'indexed_at', rh.indexed_at
+                ) ORDER BY rh.indexed_at DESC
+              ) FILTER (WHERE rh.branch IS NOT NULL) AS heads
+       FROM repos r
+       LEFT JOIN repo_head rh ON rh.repo_id = r.id
+       GROUP BY r.id, r.org, r.name, r.default_branch, r.primary_lang, r.created_at
+       ORDER BY r.org, r.name`
+    );
+
+    return reply.send({
+      repos: res.rows.map(r => ({
+        ...r,
+        heads: r.heads ?? [],
+      })),
+    });
+  });
+
   // HEAD check used by Serena fallback uploader before deciding to upload
   app.get<{ Params: { org: string; repo: string }; Querystring: { commit?: string } }>(
     "/v1/repos/:org/:repo/heads",
