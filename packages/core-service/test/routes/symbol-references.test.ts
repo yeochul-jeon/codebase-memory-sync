@@ -48,7 +48,7 @@ beforeAll(async () => {
   const ix = await pool.query<{ id: string }>(
     `INSERT INTO indexes (repo_id, commit_sha, branch, uploader, tool, status)
      VALUES ($1, $2, 'main', 'ci', 'scip-test', 'ready')
-     ON CONFLICT (repo_id, commit_sha, tool) DO UPDATE SET status = 'ready' RETURNING id`,
+     ON CONFLICT (repo_id, commit_sha, tool) WHERE status NOT IN ('failed', 'reclaiming') DO UPDATE SET status = 'ready' RETURNING id`,
     [repoId, TEST_COMMIT]
   );
   const indexId = ix.rows[0]!.id;

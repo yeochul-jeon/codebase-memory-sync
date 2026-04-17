@@ -81,7 +81,7 @@ beforeAll(async () => {
     `INSERT INTO indexes
        (repo_id, commit_sha, branch, uploader, tool, status, source_blob_key)
      VALUES ($1, $2, 'main', 'ci', 'scip-java', 'ready', $3)
-     ON CONFLICT (repo_id, commit_sha, tool) DO UPDATE
+     ON CONFLICT (repo_id, commit_sha, tool) WHERE status NOT IN ('failed', 'reclaiming') DO UPDATE
        SET status = 'ready', source_blob_key = $3 RETURNING id`,
     [repoId, TEST_COMMIT, sourceBlobKey]
   );
@@ -182,7 +182,7 @@ describe("GET /v1/sources/file", () => {
     await pool.query(
       `INSERT INTO indexes (repo_id, commit_sha, branch, uploader, tool, status)
        VALUES ($1, $2, 'main', 'client', 'scip-java', 'ready')
-       ON CONFLICT (repo_id, commit_sha, tool) DO UPDATE SET status = 'ready'`,
+       ON CONFLICT (repo_id, commit_sha, tool) WHERE status NOT IN ('failed', 'reclaiming') DO UPDATE SET status = 'ready'`,
       [repoId, clientCommit]
     );
 
