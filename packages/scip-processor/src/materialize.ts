@@ -28,7 +28,7 @@ export async function materialize(
     indexId: string;
     repoId: string;
     commitSha: string;
-    branch: string | null;
+    branch: string;
     parsed: ParsedIndex;
   }
 ): Promise<void> {
@@ -124,16 +124,14 @@ export async function materialize(
     [indexId]
   );
 
-  // 6. Upsert repo_head (only if we have a branch)
-  if (branch) {
-    await client.query(
-      `INSERT INTO repo_head (repo_id, branch, commit_sha, index_id, indexed_at)
-       VALUES ($1, $2, $3, $4, NOW())
-       ON CONFLICT (repo_id, branch) DO UPDATE
-         SET commit_sha = EXCLUDED.commit_sha,
-             index_id   = EXCLUDED.index_id,
-             indexed_at = NOW()`,
-      [repoId, branch, commitSha, indexId]
-    );
-  }
+  // 6. Upsert repo_head (branch is required — ADR-018)
+  await client.query(
+    `INSERT INTO repo_head (repo_id, branch, commit_sha, index_id, indexed_at)
+     VALUES ($1, $2, $3, $4, NOW())
+     ON CONFLICT (repo_id, branch) DO UPDATE
+       SET commit_sha = EXCLUDED.commit_sha,
+           index_id   = EXCLUDED.index_id,
+           indexed_at = NOW()`,
+    [repoId, branch, commitSha, indexId]
+  );
 }

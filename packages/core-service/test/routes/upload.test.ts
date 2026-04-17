@@ -123,6 +123,68 @@ afterAll(async () => {
   if (app) await app.close();
 });
 
+describe("POST /v1/scip/upload — branch validation (ADR-018)", () => {
+  it("returns 400 missing_fields when branch is omitted", async () => {
+    if (!available) { console.warn("Skipping — Postgres not available"); return; }
+    const { body, contentType } = buildMultipart(
+      { repo: `${TEST_ORG}/${TEST_REPO}`, commit: TEST_COMMIT, tool: TEST_TOOL },
+      [
+        { name: "scip", filename: "index.scip", content: MINIMAL_SCIP },
+        { name: "source", filename: "source.zip", content: Buffer.from("PK\x03\x04"), contentType: "application/zip" },
+      ]
+    );
+    const res = await app.inject({
+      method: "POST", url: "/v1/scip/upload",
+      headers: { "content-type": contentType, "authorization": `Bearer ${CI_TOKEN}`, "x-cms-uploader": "ci" },
+      payload: body,
+    });
+    expect(res.statusCode).toBe(400);
+    expect((JSON.parse(res.body) as { error: string }).error).toBe("missing_fields");
+  });
+
+  it("returns 400 missing_fields when branch is empty string", async () => {
+    if (!available) return;
+    const { body, contentType } = buildMultipart(
+      { repo: `${TEST_ORG}/${TEST_REPO}`, commit: TEST_COMMIT, tool: TEST_TOOL, branch: "" },
+      [
+        { name: "scip", filename: "index.scip", content: MINIMAL_SCIP },
+        { name: "source", filename: "source.zip", content: Buffer.from("PK\x03\x04"), contentType: "application/zip" },
+      ]
+    );
+    const res = await app.inject({
+      method: "POST", url: "/v1/scip/upload",
+      headers: { "content-type": contentType, "authorization": `Bearer ${CI_TOKEN}`, "x-cms-uploader": "ci" },
+      payload: body,
+    });
+    expect(res.statusCode).toBe(400);
+    expect((JSON.parse(res.body) as { error: string }).error).toBe("missing_fields");
+  });
+
+  it("stores branch in indexes table when branch is valid", async () => {
+    if (!available) return;
+    const commit = "branch-test-" + "0".repeat(28);
+    const { body, contentType } = buildMultipart(
+      { repo: `${TEST_ORG}/${TEST_REPO}`, commit, tool: TEST_TOOL, branch: "main" },
+      [
+        { name: "scip", filename: "index.scip", content: MINIMAL_SCIP },
+        { name: "source", filename: "source.zip", content: Buffer.from("PK\x03\x04"), contentType: "application/zip" },
+      ]
+    );
+    const res = await app.inject({
+      method: "POST", url: "/v1/scip/upload",
+      headers: { "content-type": contentType, "authorization": `Bearer ${CI_TOKEN}`, "x-cms-uploader": "ci" },
+      payload: body,
+    });
+    expect(res.statusCode).toBe(201);
+    const { index_id } = JSON.parse(res.body) as { index_id: string };
+    const row = await pool.query<{ branch: string }>(
+      "SELECT branch FROM indexes WHERE id = $1",
+      [index_id]
+    );
+    expect(row.rows[0]?.branch).toBe("main");
+  });
+});
+
 describe("POST /v1/scip/upload — Phase 2c source upload", () => {
   it("CI upload with source.zip returns 201 and stores source_blob_key", async () => {
     if (!available) {
@@ -132,7 +194,7 @@ describe("POST /v1/scip/upload — Phase 2c source upload", () => {
 
     const sourceZip = Buffer.from("PK\x03\x04"); // minimal zip magic bytes
     const { body, contentType } = buildMultipart(
-      { repo: `${TEST_ORG}/${TEST_REPO}`, commit: TEST_COMMIT, tool: TEST_TOOL },
+      { repo: `${TEST_ORG}/${TEST_REPO}`, commit: TEST_COMMIT, tool: TEST_TOOL, branch: "main" },
       [
         { name: "scip", filename: "index.scip", content: MINIMAL_SCIP },
         { name: "source", filename: "source.zip", content: sourceZip, contentType: "application/zip" },
@@ -172,7 +234,7 @@ describe("POST /v1/scip/upload — Phase 2c source upload", () => {
 
     const commit = TEST_COMMIT.replace(/0/g, "1"); // distinct commit
     const { body, contentType } = buildMultipart(
-      { repo: `${TEST_ORG}/${TEST_REPO}`, commit, tool: TEST_TOOL },
+      { repo: `${TEST_ORG}/${TEST_REPO}`, commit, tool: TEST_TOOL, branch: "main" },
       [{ name: "scip", filename: "index.scip", content: MINIMAL_SCIP }]
     );
 
@@ -198,7 +260,7 @@ describe("POST /v1/scip/upload — Phase 2c source upload", () => {
     const commit = "aabbccddeeff112233445566778899001122334455";
     const sourceZip = Buffer.from("PK\x03\x04");
     const { body, contentType } = buildMultipart(
-      { repo: `${TEST_ORG}/${TEST_REPO}`, commit, tool: TEST_TOOL },
+      { repo: `${TEST_ORG}/${TEST_REPO}`, commit, tool: TEST_TOOL, branch: "main" },
       [
         { name: "scip", filename: "index.scip", content: MINIMAL_SCIP },
         { name: "source", filename: "source.zip", content: sourceZip },
@@ -234,7 +296,7 @@ describe("POST /v1/scip/upload — Two-Phase Replace atomicity", () => {
 
     const commit = `${TPR_COMMIT_BASE}${"0".repeat(36)}`;
     const { body, contentType } = buildMultipart(
-      { repo: `${TEST_ORG}/${TEST_REPO}`, commit, tool: TEST_TOOL },
+      { repo: `${TEST_ORG}/${TEST_REPO}`, commit, tool: TEST_TOOL, branch: "main" },
       [
         { name: "scip", filename: "index.scip", content: MINIMAL_SCIP },
         { name: "source", filename: "source.zip", content: Buffer.from("PK\x03\x04"), contentType: "application/zip" },
@@ -270,7 +332,7 @@ describe("POST /v1/scip/upload — Two-Phase Replace atomicity", () => {
 
     // Step 1: successful client upload
     const { body: b1, contentType: ct1 } = buildMultipart(
-      { repo: `${TEST_ORG}/${TEST_REPO}`, commit, tool: TEST_TOOL },
+      { repo: `${TEST_ORG}/${TEST_REPO}`, commit, tool: TEST_TOOL, branch: "main" },
       [{ name: "scip", filename: "index.scip", content: MINIMAL_SCIP }]
     );
     const r1 = await app.inject({
@@ -284,7 +346,7 @@ describe("POST /v1/scip/upload — Two-Phase Replace atomicity", () => {
     // Step 2: CI upload with blob failure
     vi.mocked(putScipBlob).mockRejectedValueOnce(new Error("MinIO down"));
     const { body: b2, contentType: ct2 } = buildMultipart(
-      { repo: `${TEST_ORG}/${TEST_REPO}`, commit, tool: TEST_TOOL },
+      { repo: `${TEST_ORG}/${TEST_REPO}`, commit, tool: TEST_TOOL, branch: "main" },
       [
         { name: "scip", filename: "index.scip", content: MINIMAL_SCIP },
         { name: "source", filename: "source.zip", content: Buffer.from("PK\x03\x04"), contentType: "application/zip" },
@@ -311,7 +373,7 @@ describe("POST /v1/scip/upload — Two-Phase Replace atomicity", () => {
 
     // Step 1: client upload
     const { body: b1, contentType: ct1 } = buildMultipart(
-      { repo: `${TEST_ORG}/${TEST_REPO}`, commit, tool: TEST_TOOL },
+      { repo: `${TEST_ORG}/${TEST_REPO}`, commit, tool: TEST_TOOL, branch: "main" },
       [{ name: "scip", filename: "index.scip", content: MINIMAL_SCIP }]
     );
     const r1 = await app.inject({
@@ -324,7 +386,7 @@ describe("POST /v1/scip/upload — Two-Phase Replace atomicity", () => {
 
     // Step 2: CI upload (blobs succeed via mock default)
     const { body: b2, contentType: ct2 } = buildMultipart(
-      { repo: `${TEST_ORG}/${TEST_REPO}`, commit, tool: TEST_TOOL },
+      { repo: `${TEST_ORG}/${TEST_REPO}`, commit, tool: TEST_TOOL, branch: "main" },
       [
         { name: "scip", filename: "index.scip", content: MINIMAL_SCIP },
         { name: "source", filename: "source.zip", content: Buffer.from("PK\x03\x04"), contentType: "application/zip" },

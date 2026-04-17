@@ -368,6 +368,38 @@ describe("commit omission semantics", () => {
     expect(json.commit_sha).toBe(TEST_COMMIT);
   });
 
+  it("returns 404 when repo_head.index_id is NULL", async () => {
+    if (!available) return;
+    // Null out main branch index_id, run assertion, restore
+    await pool.query(
+      `UPDATE repo_head SET index_id = NULL
+       WHERE repo_id = (SELECT id FROM repos WHERE org = $1 AND name = $2)
+       AND branch = 'main'`,
+      [TEST_ORG, TEST_REPO]
+    );
+    try {
+      const res = await app.inject({
+        method: "GET",
+        url: `/v1/sources/file?repo=${TEST_ORG}/${TEST_REPO}&file_path=src/Foo.java&start_line=1&end_line=3`,
+      });
+      expect(res.statusCode).toBe(404);
+      expect((JSON.parse(res.body) as { error: string }).error).toBe("index_not_found");
+    } finally {
+      // Restore main → TEST_COMMIT index
+      await pool.query(
+        `UPDATE repo_head SET index_id = (
+           SELECT i.id FROM indexes i
+           JOIN repos r ON r.id = i.repo_id
+           WHERE r.org = $1 AND r.name = $2 AND i.commit_sha = $3 AND i.status = 'ready'
+           LIMIT 1
+         )
+         WHERE repo_id = (SELECT id FROM repos WHERE org = $1 AND name = $2)
+         AND branch = 'main'`,
+        [TEST_ORG, TEST_REPO, TEST_COMMIT]
+      );
+    }
+  });
+
   it("returns 404 index_not_found with default branch in detail when repo_head has no row", async () => {
     if (!available) return;
     // Use a repo with no repo_head entry
@@ -382,11 +414,11 @@ describe("commit omission semantics", () => {
     const r2Id = r2.rows[0]!.id;
     await pool.query(
       `INSERT INTO indexes (repo_id, commit_sha, branch, uploader, tool, status)
-       VALUES ($1, $2, NULL, 'ci', 'scip-java', 'ready')
+       VALUES ($1, $2, 'main', 'ci', 'scip-java', 'ready')
        ON CONFLICT (repo_id, commit_sha, tool) WHERE status NOT IN ('failed', 'reclaiming') DO UPDATE SET status='ready'`,
       [r2Id, noHeadCommit]
     );
-    // repo_head row intentionally absent
+    // repo_head row intentionally absent — resolveCommit should return 404
 
     const res = await app.inject({
       method: "GET",

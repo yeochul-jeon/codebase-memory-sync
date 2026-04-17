@@ -337,3 +337,46 @@ reclaiming ─(blob DELETE 실패)→ reclaiming (retry queue)
 - `docs/reviews/architecture-review-2026-04-17.md` P1
 - `packages/core-service/src/services/commit-resolver.ts`
 - ADR-014 (source.zip + `read_symbol_body` 설계)
+
+---
+
+### ADR-018: `indexes.branch` NOT NULL 강제 + `repo_head` 갱신 단일화
+
+**Date**: 2026-04-17
+
+**Context**:
+ADR-017에서 `resolveCommit()`이 `repo_head(branch=default_branch).index_id` fallback을 도입했으나, production에서 이 fallback이 영영 동작하지 않을 수 있는 critical gap이 발견됨:
+
+1. `routes/upload.ts`가 `branch`를 옵셔널로 처리하여 `NULL`로 INSERT 가능했음.
+2. `scip-processor/src/materialize.ts`가 `if (branch)` 가드로만 `repo_head`를 UPSERT하여, `branch=NULL/''`이면 영구 skip.
+3. CI groovy (`cmsIndex.groovy`)가 `GIT_BRANCH` 미설정 시 빈 문자열을 조용히 전송.
+
+결과: branch 없이 업로드된 인덱스는 `repo_head`에 기록되지 않아 commit-less 조회가 항상 404로 실패.
+
+**Decision**:
+1. `indexes.branch`를 `TEXT NOT NULL` + `CHECK (length(branch) > 0)` 로 강제.
+2. `routes/upload.ts`에서 `branch` 미제공 시 `400 missing_fields` 반환.
+3. `materialize.ts`의 `if (branch)` 가드 제거 — `branch NOT NULL` 계약이 보장됨.
+4. `scip-processor/src/worker.ts`의 DB 조회 타입을 `branch: string`으로 변경.
+5. `cmsIndex.groovy`가 `GIT_BRANCH/BRANCH_NAME` 미설정 시 명시적 `error()` 호출.
+6. Phase B migration으로 기존 NULL/빈 문자열 행을 `repos.default_branch`로 backfill.
+
+`repo_head` UPSERT 책임은 `materialize.ts` 단독 유지. ADR-016 Two-Phase Replace에서 `pending → ready` transition의 게이트키퍼가 materializer이므로, repo_head는 index가 `ready` 상태가 된 시점에 갱신하는 것이 정합적.
+
+**Trade-offs**:
+- 기존 NULL 행 backfill (DELETE 대신): 단일 사용자 환경 + 인덱스 데이터 보존. ADR-016 reaper와 충돌 없음.
+- upload route 인라인 검사 (zod 도입 대신): 기존 코드 스타일과 일관성 유지.
+- worker.ts 타입 변경: DB 스키마 계약을 타입에 반영 — Phase B migration 이후 NULL은 불가능.
+
+**Consequences**:
+- ADR-017 commit-less 조회가 안정적으로 동작. 새 CI 업로드부터 `repo_head`가 보장됨.
+- 기존 branch=NULL 행은 idempotent migration으로 backfill.
+- CI 파이프라인에서 GIT_BRANCH 미설정 시 명확한 오류 메시지로 조기 실패.
+- Plan B (read-path `branch` 쿼리 파라미터 노출)는 이 ADR의 write-path 보장을 전제로 additive 확장.
+
+**참조**:
+- ADR-017 — commit-less 조회 semantics 도입
+- ADR-016 Part 1 — Two-Phase Replace 상태 머신 (materializer 게이트키퍼)
+- `packages/core-service/src/routes/upload.ts:64-67`
+- `packages/scip-processor/src/materialize.ts:127-135`
+- `packages/core-service/src/storage/schema.sql` Phase B migration block

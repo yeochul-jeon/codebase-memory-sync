@@ -62,8 +62,11 @@ export async function uploadRoutes(app: FastifyInstance): Promise<void> {
 
       // Validate required fields
       const { repo, commit, branch, tool } = fields;
-      if (!repo || !commit || !tool) {
-        return reply.status(400).send({ error: "missing_fields", detail: "repo, commit, tool are required" });
+      if (!repo || !commit || !tool || !branch || branch.trim() === "") {
+        return reply.status(400).send({
+          error: "missing_fields",
+          detail: "repo, commit, branch, tool are required (branch must be non-empty)",
+        });
       }
       if (!scipBuffer || scipBuffer.length === 0) {
         return reply.status(400).send({ error: "missing_scip", detail: "multipart field 'scip' with binary content is required" });
@@ -152,7 +155,7 @@ export async function uploadRoutes(app: FastifyInstance): Promise<void> {
           [
             repoId,
             commit,
-            branch ?? null,
+            branch,
             uploader,
             tool,
             fields["tool_version"] ?? null,

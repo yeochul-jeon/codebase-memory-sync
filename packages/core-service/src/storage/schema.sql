@@ -21,7 +21,7 @@ CREATE TABLE IF NOT EXISTS indexes (
   id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   repo_id       UUID NOT NULL REFERENCES repos(id) ON DELETE CASCADE,
   commit_sha    TEXT NOT NULL,
-  branch        TEXT,
+  branch        TEXT NOT NULL,
   uploader      TEXT NOT NULL CHECK (uploader IN ('ci', 'client')),
   tool          TEXT NOT NULL,
   tool_version  TEXT,
@@ -181,3 +181,15 @@ ALTER TABLE symbols ADD COLUMN IF NOT EXISTS body_start_line INT;
 ALTER TABLE symbols ADD COLUMN IF NOT EXISTS body_start_col  INT;
 ALTER TABLE symbols ADD COLUMN IF NOT EXISTS body_end_line   INT;
 ALTER TABLE symbols ADD COLUMN IF NOT EXISTS body_end_col    INT;
+
+-- ── Phase B migration: branch NOT NULL (ADR-018) ────────────────────────────
+-- Idempotent: safe to re-run on existing databases.
+-- 1. Backfill any pre-existing NULL/empty branches to repos.default_branch.
+UPDATE indexes i
+SET    branch = r.default_branch
+FROM   repos r
+WHERE  i.repo_id = r.id AND (i.branch IS NULL OR i.branch = '');
+-- 2. Enforce NOT NULL + non-empty.
+ALTER TABLE indexes ALTER COLUMN branch SET NOT NULL;
+ALTER TABLE indexes DROP CONSTRAINT IF EXISTS indexes_branch_nonempty;
+ALTER TABLE indexes ADD CONSTRAINT indexes_branch_nonempty CHECK (length(branch) > 0);

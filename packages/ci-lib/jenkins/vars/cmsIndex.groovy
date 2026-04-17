@@ -35,7 +35,8 @@ def call(Map cfg = [:]) {
         def org      = env.ORG_NAME  ?: sh(script: 'basename $(dirname $(git remote get-url origin))', returnStdout: true).trim()
         def repoName = env.REPO_NAME ?: sh(script: 'basename $(git remote get-url origin) .git', returnStdout: true).trim()
         def commit   = env.GIT_COMMIT
-        def branch   = env.GIT_BRANCH?.replaceAll('^origin/', '')
+        def branch   = (env.GIT_BRANCH ?: env.BRANCH_NAME)?.replaceAll('^origin/', '')?.trim()
+        if (!branch) { error("[CMS] GIT_BRANCH/BRANCH_NAME is empty — cannot upload SCIP without a branch.") }
         def idemKey  = "${org}/${repoName}:${commit}:${tool}:ci"
 
         // 1. Generate SCIP index

@@ -60,7 +60,7 @@ async function processIndex(indexId: string): Promise<void> {
     id: string;
     repo_id: string;
     commit_sha: string;
-    branch: string | null;
+    branch: string;
     blob_key: string;
     status: string;
   }>(
