@@ -174,3 +174,39 @@ MVP 속도 최우선. 외부 의존성 최소화 (상용 제품 제외, OSS + �
 - 구현하려면 원본 소스 저장 파이프라인(Git clone 또는 소스 파일 별도 업로드) 설계가 선행되어야 함
 
 **트레이드오프**: 심볼 위치(file:line)를 알아도 코드 내용을 직접 반환하지 못함 → AI 에이전트가 파일 경로를 받아 Git에서 직접 조회해야 함.
+
+→ **ADR-014에서 해제**: CI source.zip 업로드 경로 확정으로 두 tool 구현 착수 가능.
+
+---
+
+### ADR-014: CI source.zip 업로드 — `read_symbol_body` / `read_file_range` 구현 경로
+
+**결정**: CI uploader는 `POST /v1/scip/upload` 동일 multipart 요청에 `.scip`와 함께 `source.zip` 아카이브를 전송한다. zip은 `{org}/{name}/{commit}/source.zip` key로 MinIO에 저장하고, `indexes.source_blob_key` 컬럼으로 주소 지정한다. 동시에 `scip-processor`는 SCIP `Occurrence.enclosing_range`를 파싱해 `symbols.body_start_line/col, body_end_line/col` 4개 컬럼에 저장한다. Client uploader는 source를 전송하지 않으며, client-only 인덱스에 대한 `read_symbol_body`/`read_file_range`는 404 + hint로 fail-fast한다.
+
+**zip 선택 이유**: central directory로 단일 파일 O(1) 랜덤 액세스. tar.gz는 단일 파일 추출에 O(N) 스캔 필요.
+
+**이유**:
+- ADR-001/004 정합 — MinIO 기존 인프라 재사용, 새로운 외부 의존성 없음
+- ADR-005(CI-wins) 정합 — source와 `.scip`이 같은 요청으로 전달되어 conflict 규칙이 그대로 성립; CI 덮어쓰기 시 두 blob 모두 갱신
+- ADR-009/012 정합 — 읽기 전용 tool surface 유지; source 미보유 인덱스는 404 + Jenkins 빌드 링크 hint
+- Git 자격증명을 core-service가 보유할 필요 없음 (on-demand Git clone 방식 기각)
+- SCIP proto fork 불필요 — vendored `scip.proto`의 기존 `Occurrence.enclosing_range` 필드를 파서에서 활성화하는 것만으로 충분
+
+**구현 전제 (구체적 변경 대상)**:
+- `indexes` 테이블: `source_blob_key TEXT NULL`, `source_sha256 TEXT NULL`, `source_bytes BIGINT NULL` 컬럼 추가
+- `symbols` 테이블: `body_start_line INT NULL`, `body_start_col INT NULL`, `body_end_line INT NULL`, `body_end_col INT NULL` 컬럼 추가
+- `POST /v1/scip/upload` multipart에 `source` part 추가 (CI: 필수, client: 거부 400)
+- `GET /v1/sources/file?repo&commit&file_path&start_line&end_line` 신규 라우트
+- `GET /v1/sources/symbol?scip_symbol&repo` 신규 라우트
+- MCP tool `read_symbol_body({ scip_symbol, repo? })`, `read_file_range({ repo, file_path, start_line, end_line, commit? })` 신규
+
+**Privacy / 제외 패턴 (CI측 적용)**:
+- 디렉토리: `.git/`, `node_modules/`, `target/`, `build/`, `dist/`, `.gradle/`, `.next/`, `.venv/`, `__pycache__/`
+- 바이너리 확장자: `*.jar`, `*.class`, `*.war`, `*.png`, `*.jpg`, `*.pdf`, `*.zip`
+- 파일당 2MB 초과 시 스킵. 총 업로드 cap: `MAX_SOURCE_SIZE_MB=200`
+
+**트레이드오프**:
+- commit당 `.scip`보다 2–5배 큰 blob 추가 → 저장 비용 선형 증가. `repo_head` commit은 무기한 보존, 그 외 CI commit은 마지막 20개만 보존하는 기본 원칙을 적용하고 실측 후 ADR-015(Retention/GC)로 구체화
+- 대형 monorepo는 200MB cap에 근접할 수 있음 — exclusion 패턴으로 완화
+- Client uploader는 `read_symbol_body` 대상 아님 (명시적 tradeoff, CI-primary 철학 정합)
+- `enclosing_range` 채움 여부는 indexer 의존: `scip-java`/`scip-typescript`는 정상 채움, `scip-ctags`는 미지원 → identifier range ±10라인 fallback, `body_source: "identifier_fallback"` 플래그로 출력에 명시
