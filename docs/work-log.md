@@ -9,7 +9,8 @@
 ## 배경 요약
 
 사내 500+ 저장소의 코드 분석 결과를 중앙에 저장하고 LLM 에이전트 및 개발 도구에서 재사용하기 위한 플랫폼 구축.  
-권장 아키텍처는 **Option D (SCIP 중심 자체 스택)** — 자세한 내용은 [`architecture-plan.md`](./architecture-plan.md) 참조.
+권장 아키텍처는 **Option D (SCIP 중심 자체 스택)** — 자세한 내용은 [`architecture-plan.md`](./architecture-plan.md) 참조.  
+주요 의사결정 기록은 [`ADR.md`](./ADR.md) 참조.
 
 ---
 
@@ -240,7 +241,7 @@ flowchart TD
 | `get_symbol_references` | `{ scip_symbol, repo?, include_definitions?, limit? }` | occurrence 목록 (file:line + role) |
 | `get_file_overview` | `{ repo, file_path, commit? }` | 파일 내 심볼 목록 (start_line 순서) |
 
-**보류 결정**
+**보류 결정** → [`ADR-009`](./ADR.md#adr-009-mcp-읽기-전용-tool-surface), [`ADR-013`](./ADR.md#adr-013-read_symbol_body--read_file_range-phase-2c-보류) 참조
 - `read_symbol_body`, `read_file_range` — 원본 소스 저장 파이프라인 없음 → Phase 2c 별도 설계
 - `find_implementors`, `get_dependencies`, `get_impact_analysis` — SCIP relationships 파싱 + `symbol_relationships` 테이블 필요 → Phase 2b
 
@@ -302,7 +303,7 @@ flowchart TD
 | `get_dependencies` | `{ scip_symbol, repo?, limit? }` | 직접 의존 심볼 목록 (관계 타입 태그 포함) |
 | `get_impact_analysis` | `{ scip_symbol, repo?, depth?, limit? }` | 역방향 재귀 의존 목록 (depth 레벨 포함) |
 
-**보류 결정**
+**보류 결정** → [`ADR-013`](./ADR.md#adr-013-read_symbol_body--read_file_range-phase-2c-보류) 참조
 - `read_symbol_body`, `read_file_range` — 원본 소스 저장 파이프라인 없음 → Phase 2c 별도 설계
 
 ---
