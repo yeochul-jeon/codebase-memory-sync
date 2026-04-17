@@ -135,7 +135,7 @@ export async function uploadRoutes(app: FastifyInstance): Promise<void> {
           });
         }
 
-        // Insert new index row (status=pending)
+        // Insert new index row with status='uploading' (Phase 1 — safe to COMMIT)
         const blobKey = `${org}/${name}/${commit}/${tool}.scip`;
         const sourceBlobKey = sourceBuffer ? `${org}/${name}/${commit}/source.zip` : null;
         const sourceSha256 = sourceBuffer ? createHash("sha256").update(sourceBuffer).digest("hex") : null;
@@ -146,8 +146,8 @@ export async function uploadRoutes(app: FastifyInstance): Promise<void> {
              (repo_id, commit_sha, branch, uploader, tool, tool_version,
               blob_key, blob_sha256,
               source_blob_key, source_sha256, source_bytes,
-              status)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'pending')
+              status, status_transition_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'uploading', NOW())
            RETURNING id`,
           [
             repoId,
@@ -164,6 +164,7 @@ export async function uploadRoutes(app: FastifyInstance): Promise<void> {
           ]
         );
         const indexId = indexRes.rows[0]!.id;
+        const replacesId = decision.action === "insert" ? decision.replaces : undefined;
 
         // Record idempotency key
         await client.query(
@@ -177,12 +178,53 @@ export async function uploadRoutes(app: FastifyInstance): Promise<void> {
           [uploader, "upload", repoId, indexId, JSON.stringify({ commit, tool, blobKey })]
         );
 
+        // Phase 1 COMMIT: index row exists as 'uploading'; old row (if any) is 'reclaiming'
         await client.query("COMMIT");
 
-        // Upload blobs to MinIO (outside transaction — idempotent)
-        await putScipBlob(blobKey, scipBuffer);
-        if (sourceBuffer && sourceBlobKey) {
-          await putSourceBlob(sourceBlobKey, sourceBuffer);
+        // Phase 2: blob PUT — outside the transaction; may fail
+        try {
+          await putScipBlob(blobKey, scipBuffer);
+          if (sourceBuffer && sourceBlobKey) {
+            await putSourceBlob(sourceBlobKey, sourceBuffer);
+          }
+        } catch (blobErr) {
+          // Blob failed: mark new index as 'failed'; restore old index if present
+          request.log.error(blobErr, "Blob PUT failed — marking index as failed");
+          await pool.query(
+            "UPDATE indexes SET status = 'failed', status_transition_at = NOW() WHERE id = $1",
+            [indexId]
+          );
+          if (replacesId) {
+            await pool.query(
+              "UPDATE indexes SET status = 'pending', status_transition_at = NOW() WHERE id = $1",
+              [replacesId]
+            );
+          }
+          return reply.status(500).send({ error: "blob_upload_failed" });
+        }
+
+        // Phase 2 success: activate new index, remove replaced index
+        const phase2Client = await pool.connect();
+        try {
+          await phase2Client.query("BEGIN");
+          if (replacesId) {
+            await phase2Client.query("DELETE FROM indexes WHERE id = $1", [replacesId]);
+          }
+          await phase2Client.query(
+            "UPDATE indexes SET status = 'pending', status_transition_at = NOW() WHERE id = $1",
+            [indexId]
+          );
+          await phase2Client.query("COMMIT");
+        } catch (activateErr) {
+          await phase2Client.query("ROLLBACK");
+          request.log.error(activateErr, "Phase 2 activation failed");
+          await pool.query(
+            "UPDATE indexes SET status = 'failed', status_transition_at = NOW() WHERE id = $1",
+            [indexId]
+          );
+          return reply.status(500).send({ error: "internal_error" });
+        } finally {
+          phase2Client.release();
         }
 
         // Notify worker

@@ -27,15 +27,22 @@ CREATE TABLE IF NOT EXISTS indexes (
   tool_version  TEXT,
   blob_key      TEXT,        -- MinIO object key, null until upload complete
   blob_sha256   TEXT,
-  status        TEXT NOT NULL DEFAULT 'pending'
-                  CHECK (status IN ('pending', 'ready', 'failed')),
+  status        TEXT NOT NULL DEFAULT 'uploading'
+                  CHECK (status IN ('pending', 'ready', 'failed', 'uploading', 'reclaiming')),
   error_msg     TEXT,
+  status_transition_at TIMESTAMPTZ,
   created_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  UNIQUE (repo_id, commit_sha, tool)
+  updated_at    TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 CREATE INDEX IF NOT EXISTS idx_indexes_repo_status ON indexes (repo_id, status);
+
+-- Partial unique: only one active index per (repo × commit × tool).
+-- 'failed' and 'reclaiming' rows are excluded so Two-Phase Replace can
+-- coexist with the old row during the blob-upload window (ADR-016).
+CREATE UNIQUE INDEX IF NOT EXISTS idx_indexes_active_unique
+  ON indexes (repo_id, commit_sha, tool)
+  WHERE status NOT IN ('failed', 'reclaiming');
 
 -- ── symbols ──────────────────────────────────────────────────────────────────
 CREATE TABLE IF NOT EXISTS symbols (
@@ -148,6 +155,20 @@ CREATE INDEX IF NOT EXISTS idx_symrel_to
 -- repo-scoped queries
 CREATE INDEX IF NOT EXISTS idx_symrel_repo
   ON symbol_relationships (repo_id, commit_sha);
+
+-- ── Phase A migration: Two-Phase Replace state machine (ADR-016 Part 1) ─────
+-- Idempotent: safe to re-run on existing databases.
+-- 1. Expand status CHECK to include 'uploading' and 'reclaiming'.
+ALTER TABLE indexes DROP CONSTRAINT IF EXISTS indexes_status_check;
+ALTER TABLE indexes ADD CONSTRAINT indexes_status_check
+  CHECK (status IN ('pending', 'ready', 'failed', 'uploading', 'reclaiming'));
+-- 2. Change default so new inserts are staged as 'uploading' until blob succeeds.
+ALTER TABLE indexes ALTER COLUMN status SET DEFAULT 'uploading';
+-- 3. Track when status last changed (for reaper and audit).
+ALTER TABLE indexes ADD COLUMN IF NOT EXISTS status_transition_at TIMESTAMPTZ;
+-- 4. Drop the full UNIQUE constraint; the partial index (above) replaces it.
+--    The constraint name is auto-assigned by Postgres as {table}_{cols}_key.
+ALTER TABLE indexes DROP CONSTRAINT IF EXISTS indexes_repo_id_commit_sha_tool_key;
 
 -- ── Phase 2c migrations ───────────────────────────────────────────────────────
 -- source blob columns on indexes (CI-only source.zip storage, ADR-014)

@@ -9,6 +9,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import pg from "pg";
 import multipart from "@fastify/multipart";
 import type { FastifyInstance } from "fastify";
+import { putScipBlob, putSourceBlob } from "../../src/storage/minio.js";
 
 // Mock MinIO before any imports that might use it
 vi.mock("../../src/storage/minio.js", () => ({
@@ -24,6 +25,7 @@ vi.mock("../../src/storage/minio.js", () => ({
 
 import { buildApp } from "../helpers/build-app.js";
 import { uploadRoutes } from "../../src/routes/upload.js";
+import { runMigrations } from "../../src/storage/postgres.js";
 
 const DB_CONFIG = {
   host: process.env["POSTGRES_HOST"] ?? "localhost",
@@ -100,9 +102,15 @@ beforeAll(async () => {
     return;
   }
 
+  // Apply full schema.sql (idempotent) — covers Phase 2c columns and Phase A state machine
+  await runMigrations();
+
+  // multipart must be registered at the same (or parent) scope as the routes
+  // to escape Fastify encapsulation. Register both in one plugin.
   app = await buildApp(async (a) => {
     await a.register(multipart, { limits: { fileSize: 200 * 1024 * 1024, files: 2 } });
-  }, uploadRoutes);
+    await uploadRoutes(a);
+  });
 });
 
 afterAll(async () => {
@@ -211,5 +219,136 @@ describe("POST /v1/scip/upload — Phase 2c source upload", () => {
     expect(res.statusCode).toBe(400);
     const json = JSON.parse(res.body) as { error: string };
     expect(json.error).toBe("source_not_allowed_for_client");
+  });
+});
+
+// ── Two-Phase Replace (upload atomicity) ─────────────────────────────────────
+// Distinct commit prefixes avoid UNIQUE conflicts with Phase 2c tests above.
+const TPR_COMMIT_BASE = "bbbb";
+
+describe("POST /v1/scip/upload — Two-Phase Replace atomicity", () => {
+  it("blob PUT failure on fresh upload sets index status to failed", async () => {
+    if (!available) { console.warn("Skipping — Postgres not available"); return; }
+
+    vi.mocked(putScipBlob).mockRejectedValueOnce(new Error("MinIO down"));
+
+    const commit = `${TPR_COMMIT_BASE}${"0".repeat(36)}`;
+    const { body, contentType } = buildMultipart(
+      { repo: `${TEST_ORG}/${TEST_REPO}`, commit, tool: TEST_TOOL },
+      [
+        { name: "scip", filename: "index.scip", content: MINIMAL_SCIP },
+        { name: "source", filename: "source.zip", content: Buffer.from("PK\x03\x04"), contentType: "application/zip" },
+      ]
+    );
+
+    const res = await app.inject({
+      method: "POST",
+      url: "/v1/scip/upload",
+      headers: {
+        "content-type": contentType,
+        "authorization": `Bearer ${CI_TOKEN}`,
+        "x-cms-uploader": "ci",
+      },
+      payload: body,
+    });
+
+    expect(res.statusCode).toBe(500);
+
+    const row = await pool.query<{ status: string }>(
+      `SELECT i.status FROM indexes i
+       JOIN repos r ON r.id = i.repo_id
+       WHERE r.org = $1 AND r.name = $2 AND i.commit_sha = $3`,
+      [TEST_ORG, TEST_REPO, commit]
+    );
+    expect(row.rows[0]?.status).toBe("failed");
+  });
+
+  it("blob PUT failure on CI-replaces-client leaves old client index intact", async () => {
+    if (!available) { console.warn("Skipping — Postgres not available"); return; }
+
+    const commit = `${TPR_COMMIT_BASE}${"0".repeat(35)}1`;
+
+    // Step 1: successful client upload
+    const { body: b1, contentType: ct1 } = buildMultipart(
+      { repo: `${TEST_ORG}/${TEST_REPO}`, commit, tool: TEST_TOOL },
+      [{ name: "scip", filename: "index.scip", content: MINIMAL_SCIP }]
+    );
+    const r1 = await app.inject({
+      method: "POST", url: "/v1/scip/upload",
+      headers: { "content-type": ct1, "authorization": `Bearer ${CLIENT_TOKEN}`, "x-cms-uploader": "client" },
+      payload: b1,
+    });
+    expect(r1.statusCode).toBe(201);
+    const { index_id: clientIndexId } = JSON.parse(r1.body) as { index_id: string };
+
+    // Step 2: CI upload with blob failure
+    vi.mocked(putScipBlob).mockRejectedValueOnce(new Error("MinIO down"));
+    const { body: b2, contentType: ct2 } = buildMultipart(
+      { repo: `${TEST_ORG}/${TEST_REPO}`, commit, tool: TEST_TOOL },
+      [
+        { name: "scip", filename: "index.scip", content: MINIMAL_SCIP },
+        { name: "source", filename: "source.zip", content: Buffer.from("PK\x03\x04"), contentType: "application/zip" },
+      ]
+    );
+    await app.inject({
+      method: "POST", url: "/v1/scip/upload",
+      headers: { "content-type": ct2, "authorization": `Bearer ${CI_TOKEN}`, "x-cms-uploader": "ci" },
+      payload: b2,
+    });
+
+    // Old client index must still be present
+    const row = await pool.query<{ id: string }>(
+      "SELECT id FROM indexes WHERE id = $1",
+      [clientIndexId]
+    );
+    expect(row.rows).toHaveLength(1);
+  });
+
+  it("successful CI over client deletes old index and transitions to pending", async () => {
+    if (!available) { console.warn("Skipping — Postgres not available"); return; }
+
+    const commit = `${TPR_COMMIT_BASE}${"0".repeat(35)}2`;
+
+    // Step 1: client upload
+    const { body: b1, contentType: ct1 } = buildMultipart(
+      { repo: `${TEST_ORG}/${TEST_REPO}`, commit, tool: TEST_TOOL },
+      [{ name: "scip", filename: "index.scip", content: MINIMAL_SCIP }]
+    );
+    const r1 = await app.inject({
+      method: "POST", url: "/v1/scip/upload",
+      headers: { "content-type": ct1, "authorization": `Bearer ${CLIENT_TOKEN}`, "x-cms-uploader": "client" },
+      payload: b1,
+    });
+    expect(r1.statusCode).toBe(201);
+    const { index_id: clientIndexId } = JSON.parse(r1.body) as { index_id: string };
+
+    // Step 2: CI upload (blobs succeed via mock default)
+    const { body: b2, contentType: ct2 } = buildMultipart(
+      { repo: `${TEST_ORG}/${TEST_REPO}`, commit, tool: TEST_TOOL },
+      [
+        { name: "scip", filename: "index.scip", content: MINIMAL_SCIP },
+        { name: "source", filename: "source.zip", content: Buffer.from("PK\x03\x04"), contentType: "application/zip" },
+      ]
+    );
+    const r2 = await app.inject({
+      method: "POST", url: "/v1/scip/upload",
+      headers: { "content-type": ct2, "authorization": `Bearer ${CI_TOKEN}`, "x-cms-uploader": "ci" },
+      payload: b2,
+    });
+    expect(r2.statusCode).toBe(201);
+    expect((JSON.parse(r2.body) as { status: string }).status).toBe("pending");
+
+    // Old client index must be gone
+    const oldRow = await pool.query<{ id: string }>("SELECT id FROM indexes WHERE id = $1", [clientIndexId]);
+    expect(oldRow.rows).toHaveLength(0);
+
+    // New CI index must have status='pending'
+    const newRow = await pool.query<{ status: string }>(
+      `SELECT i.status FROM indexes i
+       JOIN repos r ON r.id = i.repo_id
+       WHERE r.org = $1 AND r.name = $2 AND i.commit_sha = $3`,
+      [TEST_ORG, TEST_REPO, commit]
+    );
+    expect(newRow.rows[0]?.status).toBe("pending");
   });
 });

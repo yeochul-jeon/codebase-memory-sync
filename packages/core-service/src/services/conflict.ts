@@ -2,7 +2,7 @@ import type { PoolClient } from "pg";
 import type { Uploader } from "../auth/bearer.js";
 
 export type ConflictDecision =
-  | { action: "insert" }
+  | { action: "insert"; replaces?: string }
   | { action: "idempotent"; indexId: string }
   | { action: "ci_wins" };
 
@@ -49,8 +49,13 @@ export async function resolveConflict(
     return { action: "ci_wins" };
   }
 
-  // All other cases (CI over client, CI over CI, client over client) → replace
-  // Delete the old index; cascade will remove symbols/occurrences
-  await client.query("DELETE FROM indexes WHERE id = $1", [existing.id]);
-  return { action: "insert" };
+  // All other cases (CI over client, CI over CI, client over client) → replace.
+  // Mark old row as 'reclaiming' so it leaves the partial-unique index window,
+  // allowing the new 'uploading' row to be inserted without a UNIQUE conflict.
+  // The caller deletes the old row (and its blobs) only after blob PUT succeeds.
+  await client.query(
+    "UPDATE indexes SET status = 'reclaiming', status_transition_at = NOW() WHERE id = $1",
+    [existing.id]
+  );
+  return { action: "insert", replaces: existing.id };
 }
