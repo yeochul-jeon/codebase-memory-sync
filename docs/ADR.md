@@ -257,3 +257,51 @@ MVP 속도 최우선. 외부 의존성 최소화 (상용 제품 제외, OSS + �
 **참조**:
 - `docs/research/storage-alternatives.md`
 - `docs/research/storage-direction-vector-graph-options-2026-04-17.md`
+
+---
+
+### ADR-016: source blob Retention/GC 정책 — Part 1 (업로드 상태 정리)
+
+**결정**: 업로드 중간 상태(`uploading`, `failed`)와 orphan blob에 대한 자동 정리 정책을 확정한다. 운영 데이터 기반 retention 수치(branch head 보존 기간, non-head 유지 개수)는 E2E 검증 이후 Part 2에서 별도 확정한다.
+
+**배경**: ADR-014(Two-Phase Replace, ADR-016 예정)에서 도입되는 `uploading`/`failed` 상태는 장애 시 좀비 row와 orphan blob을 생성할 수 있다. 운영 시작 전 자동 정리 규칙이 없으면 MinIO 스토리지가 무한 누적된다.
+
+**Part 1 결정 사항 (E2E 전 구현 대상)**:
+
+| 항목 | 정책 | 근거 |
+|---|---|---|
+| `uploading` 좀비 reaper | `status_transition_at < now() - interval '60s'`인 `uploading` row를 `failed`로 전이. cron 주기: 5분 | 정상 업로드 p99 < 60s 가정. OOM/SIGKILL 복구 |
+| `failed` blob 삭제 | `status='failed'`이고 `status_transition_at < now() - interval '24h'`인 row의 MinIO blob 삭제 후 `status='reclaiming'`으로 전이 | blob 삭제 전 24h 대기 → 디버그 창 확보 |
+| `failed` DB row 삭제 | blob 삭제(`reclaiming`) 성공 후 7일 경과 시 DB row 삭제 | 감사 로그 7일 보존 후 완전 삭제 |
+| 삭제 3-phase 순서 | `failed` → `reclaiming` 전이(DB) → MinIO blob DELETE → DB row DELETE. 각 단계 실패 시 retry-safe | 순서 역전 시 orphan blob 또는 stale row 방지 |
+| MinIO lifecycle | `abort_incomplete_multipart_upload` TTL = 1d (버킷 레벨 설정) | 멀티파트 업로드 중단 파편 자동 제거 |
+| `reclaiming` 상태 고착 | `status='reclaiming'`이고 `status_transition_at < now() - interval '1h'`인 row를 재시도 큐에 추가 | blob DELETE 실패 후 retry 보장 |
+
+**상태 전이 다이어그램 (Part 1 범위)**:
+```
+uploading ──(60s 초과)──→ failed
+failed    ──(24h 경과)──→ reclaiming
+reclaiming ─(blob DELETE 성공)→ [DB row 7일 후 삭제]
+reclaiming ─(blob DELETE 실패)→ reclaiming (retry queue)
+```
+
+**Part 2 미결 사항 (E2E 후, 실측 기반)**:
+1. `default_branch` head blob 보존 기간 — 영구 vs 기간 한정
+2. non-head CI commit blob 유지 개수/기간 — "repo당 최근 N개 또는 N일" 수치 결정
+3. 삭제된 blob에 대한 재파싱 요청 응답 정책 — `410 Gone` + CI 재업로드 안내 후보
+4. Part 2 확정 트리거: E2E 이후 `blob_storage_bytes_by_status`, `blob_age_distribution` metric 수집 결과 기반
+
+**구현 전제**:
+- `indexes.status` CHECK 제약: `'uploading'`, `'failed'`, `'reclaiming'` 추가 (ADR-014의 `'pending'`, `'processing'`, `'indexed'` 유지)
+- `indexes.status_transition_at TIMESTAMPTZ NOT NULL DEFAULT now()` 컬럼 추가
+- reaper/GC cron: `packages/core-service/src/workers/blob-gc.ts` 신규
+- MinIO lifecycle 설정: `scripts/setup-minio-lifecycle.sh` 또는 Terraform
+
+**트레이드오프**:
+- 24h blob 보존 대기는 MinIO 용량을 소폭 추가 소비하지만 운영 디버그 창을 확보함
+- 7일 DB row 보존은 감사 추적 가능성을 제공하나 테이블 bloat 주의 (autovacuum 확인 필요)
+- Part 2 수치 미확정은 E2E 기간 동안 blob 무한 누적 위험을 일부 허용하나, Part 1 reaper가 `uploading`/`failed` 좀비를 정리하므로 비정상 blob만 관리됨
+
+**참조**:
+- ADR-014 — Two-Phase Replace 상태 머신 (Part 1의 전제 구현)
+- ADR-015 — Phase 1 운영 정책 정리 목표
