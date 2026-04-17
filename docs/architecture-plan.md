@@ -195,7 +195,7 @@ Exposure (별도 게이트웨이로 자체 구현 여전히 필요)
 │             └──────────────┬────────────────┘                 │
 │                            ▼                                  │
 │                  POST /v1/scip/upload                         │
-│          (OIDC auth, idempotency key, CI-wins 규칙)           │
+│          (Bearer token, idempotency key, CI-wins 규칙)        │
 ├──────────────────────────────────────────────────────────────┤
 │  CORE SERVICE (cms-core, TypeScript + Fastify)               │
 │                                                              │
@@ -270,20 +270,29 @@ audit_log (ts, actor, action, repo_id, detail jsonb)
 
 ```
 POST /v1/scip/upload
-  Authorization: Bearer <OIDC token>
-  X-CMS-Idempotency-Key: <hash(repo, commit, tool, uploader)>
+  Authorization: Bearer <CMS_CI_TOKEN>           # 정적 Bearer 토큰 (OIDC 미구현)
+  X-CMS-Idempotency-Key: <{org}/{repo}:{commit}:{tool}:{uploader}>
   X-CMS-Uploader: ci | client
   Content-Type: multipart/form-data
-  Fields: repo, commit, branch, tool, tool_version, scip(binary)
+  Fields:
+    repo          — "{org}/{name}" 형식
+    commit        — full SHA
+    branch        — 브랜치명 (origin/ 접두사 제거)
+    tool          — scip-java | scip-typescript | scip-ctags
+    scip          — binary (.scip 파일)
+    source        — binary (.zip 파일, CI: 필수 / client: 400 거부)
 
 응답
   201  새로 생성
   200  멱등 재생 (이미 동일 업로드 존재)
+  400  source 규칙 위반 (CI가 누락하거나 client가 포함)
   409  ci_wins (CI 인덱스 존재 시 client 거부)
   413  too large (>500MB)
 ```
 
 **Conflict 규칙**: CI 업로드는 client 인덱스를 무조건 덮어씀. Client 업로드는 CI 인덱스 존재 시 409 반환.
+
+> SCIP + source.zip 동일 요청 전송 설계 근거 → [ADR-014](./ADR.md#adr-014-ci-sourcezip-업로드--read_symbol_body--read_file_range-구현-경로)
 
 ---
 
@@ -315,30 +324,52 @@ codeatlas의 tool 계약을 계승하되, 중앙 공유용으로 재구현.
 ### 4.6 CI 통합 (Jenkins shared library)
 
 ```groovy
-// jenkins-shared-lib: vars/cmsIndex.groovy
+// packages/ci-lib/jenkins/vars/cmsIndex.groovy
 def call(Map cfg = [:]) {
-  def tool = cfg.tool ?: detectTool()  // scip-java | scip-typescript | scip-ctags
+  def tool     = cfg.tool ?: detectTool()  // scip-java | scip-typescript | scip-ctags
+  def endpoint = cfg.endpoint ?: env.CMS_ENDPOINT ?: 'http://localhost:3000'
+
   stage("CMS: SCIP index (${tool})") {
+    def org      = env.ORG_NAME  ?: sh(script: 'basename $(dirname $(git remote get-url origin))', returnStdout: true).trim()
+    def repoName = env.REPO_NAME ?: sh(script: 'basename $(git remote get-url origin) .git', returnStdout: true).trim()
+    def commit   = env.GIT_COMMIT
+    def branch   = env.GIT_BRANCH?.replaceAll('^origin/', '')
+    def idemKey  = "${org}/${repoName}:${commit}:${tool}:ci"
+
+    // 1. SCIP 인덱스 생성
     sh """
-      docker run --rm -v \$PWD:/work \\
+      docker run --rm -v "\$PWD:/work" \\
         registry.internal/cms/scip-indexer:${tool}-latest /run.sh
     """
+
+    // 2. source.zip 생성 — 빌드 산출물·바이너리·VCS 제외 (ADR-014 제외 패턴)
     sh """
-      curl -fSs -X POST https://cms.internal/v1/scip/upload \\
+      zip -qr /work/source.zip . \\
+        -x '.git/*' -x 'node_modules/*' -x 'target/*' -x 'build/*' \\
+        -x 'dist/*' -x '.gradle/*' -x '.next/*' -x '.venv/*' \\
+        -x '__pycache__/*' -x '*.jar' -x '*.class' -x '*.war' \\
+        -x '*.png' -x '*.jpg' -x '*.pdf'
+    """
+
+    // 3. SCIP + source.zip 업로드
+    sh """
+      curl -fSs -X POST "${endpoint}/v1/scip/upload" \\
         -H "Authorization: Bearer \$CMS_CI_TOKEN" \\
         -H "X-CMS-Uploader: ci" \\
-        -H "X-CMS-Idempotency-Key: \${GIT_COMMIT}-${tool}-ci" \\
-        -F repo="${env.ORG}/${env.REPO_NAME}" \\
-        -F commit="\${GIT_COMMIT}" \\
-        -F branch="\${GIT_BRANCH}" \\
-        -F tool="${tool}" \\
-        -F scip=@index.scip
+        -H "X-CMS-Idempotency-Key: ${idemKey}" \\
+        -F "repo=${org}/${repoName}" \\
+        -F "commit=${commit}" \\
+        -F "branch=${branch}" \\
+        -F "tool=${tool}" \\
+        -F "scip=@index.scip" \\
+        -F "source=@source.zip"
     """
   }
 }
 ```
 
-**업로드 트리거**: `default_branch`, `main/master/develop` push만. PR/MR는 빌드만 수행.
+**업로드 트리거**: `default_branch`, `main/master/develop` push만. PR/MR는 빌드만 수행.  
+**환경 변수**: `CMS_ENDPOINT` (기본값 `http://localhost:3000`), `CMS_CI_TOKEN` (Jenkins Credentials)
 
 ---
 
@@ -375,10 +406,14 @@ def call(Map cfg = [:]) {
 
 ```
 s3://cms-scip/
-  {org}/{repo}/{commit[:2]}/{commit}/{tool}.scip
-  {org}/{repo}/{commit[:2]}/{commit}/{tool}.scip.sha256
-  _manifests/{org}/{repo}/{commit}.json
+  {org}/{name}/{commit}/{tool}.scip       # SCIP 인덱스 (CI + client)
+  {org}/{name}/{commit}/source.zip        # 원본 소스 아카이브 (CI 전용)
 ```
+
+- `sha256`은 별도 파일이 아닌 `indexes.sha256` / `indexes.source_sha256` DB 컬럼에 저장
+- 2-tier commit prefix(`{commit[:2]}`) 및 `_manifests/` 디렉토리는 미구현
+
+> 상세 키 규칙 및 source 저장 정책 → [ADR-014](./ADR.md#adr-014-ci-sourcezip-업로드--read_symbol_body--read_file_range-구현-경로)
 
 ---
 

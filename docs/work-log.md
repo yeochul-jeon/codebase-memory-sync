@@ -241,8 +241,8 @@ flowchart TD
 | `get_symbol_references` | `{ scip_symbol, repo?, include_definitions?, limit? }` | occurrence 목록 (file:line + role) |
 | `get_file_overview` | `{ repo, file_path, commit? }` | 파일 내 심볼 목록 (start_line 순서) |
 
-**보류 결정** → [`ADR-009`](./ADR.md#adr-009-mcp-읽기-전용-tool-surface), [`ADR-013`](./ADR.md#adr-013-read_symbol_body--read_file_range-phase-2c-보류) 참조
-- `read_symbol_body`, `read_file_range` — 원본 소스 저장 파이프라인 없음 → Phase 2c 별도 설계
+**Phase 2c에서 구현 완료** → [`ADR-014`](./ADR.md#adr-014-ci-sourcezip-업로드--read_symbol_body--read_file_range-구현-경로) 참조 (ADR-013 해제)
+- `read_symbol_body`, `read_file_range` — ✅ Phase 2c 구현 완료 (CI source.zip 업로드 + MinIO 저장 + zip entry 추출)
 - `find_implementors`, `get_dependencies`, `get_impact_analysis` — SCIP relationships 파싱 + `symbol_relationships` 테이블 필요 → Phase 2b
 
 ---
@@ -303,8 +303,8 @@ flowchart TD
 | `get_dependencies` | `{ scip_symbol, repo?, limit? }` | 직접 의존 심볼 목록 (관계 타입 태그 포함) |
 | `get_impact_analysis` | `{ scip_symbol, repo?, depth?, limit? }` | 역방향 재귀 의존 목록 (depth 레벨 포함) |
 
-**보류 결정** → [`ADR-013`](./ADR.md#adr-013-read_symbol_body--read_file_range-phase-2c-보류) 참조
-- `read_symbol_body`, `read_file_range` — 원본 소스 저장 파이프라인 없음 → Phase 2c 별도 설계
+**Phase 2c에서 구현 완료** → [`ADR-014`](./ADR.md#adr-014-ci-sourcezip-업로드--read_symbol_body--read_file_range-구현-경로) 참조 (ADR-013 해제)
+- `read_symbol_body`, `read_file_range` — ✅ Phase 2c 구현 완료
 
 ---
 
@@ -313,21 +313,24 @@ flowchart TD
 ```
 packages/
 ├── core-service/     ✅ REST API (upload, repos, symbols, symbol-references, file-overview, search,
-│                                  indexes, health, implementors, dependencies, impact)
-├── scip-processor/   ✅ SCIP → Postgres worker (relationships 파싱 포함)
+│                                  indexes, health, implementors, dependencies, impact,
+│                                  sources — read_symbol_body / read_file_range)
+├── scip-processor/   ✅ SCIP → Postgres worker (relationships 파싱, enclosing_range 파싱 포함)
 ├── mcp-server/       ✅ MCP stdio (list_projects, search_symbols, get_symbol_detail,
 │                                  get_symbol_references, get_file_overview,
-│                                  find_implementors, get_dependencies, get_impact_analysis)
-└── ci-lib/           ✅ Jenkins shared library 스캐폴딩
+│                                  find_implementors, get_dependencies, get_impact_analysis,
+│                                  read_symbol_body, read_file_range)
+└── ci-lib/           ✅ Jenkins shared library (SCIP 인덱싱 + source.zip 업로드)
 ```
 
 ### 테스트 커버리지 현황
 
 | 패키지 | 테스트 수 | 종류 |
 |--------|----------|------|
-| `core-service` | 46개 | 라우트 통합 (app.inject) |
-| `scip-processor` | 13개 | 단위 + E2E + 관계 통합 |
-| `mcp-server` | 50개 | 단위 41개 + stdio roundtrip 통합 9개 |
+| `core-service` | 61개 | 라우트 통합 (app.inject) |
+| `scip-processor` | 21개 | 단위 + E2E + 관계 통합 + enclosing_range |
+| `mcp-server` | 60개 | 단위 + stdio roundtrip 통합 |
+| **전체** | **142개** | typecheck 0 errors |
 
 ---
 
@@ -337,7 +340,7 @@ packages/
 
 | 항목 | 내용 | 우선순위 |
 |------|------|---------|
-| MCP tool 추가 | `read_symbol_body`, `read_file_range` (Phase 2c — 원본 소스 파이프라인 설계 필요) | 높음 |
+| MCP tool 추가 | `read_symbol_body`, `read_file_range` — ✅ Phase 2c 완료 (ADR-014) | 완료 |
 | scip-typescript 지원 | Nuxt/Next 저장소 인덱싱 | 높음 |
 | Memory tools | `write/read/list/edit/delete_memory` (저장소 단위 공유 노트) | 중간 |
 | Zoekt 사이드카 | `code_search` tool — 전문 텍스트/regex 검색 | 중간 |
