@@ -45,19 +45,23 @@ export async function materialize(
     if (chunk.length === 0) continue;
     const vals: unknown[] = [];
     const ph = chunk.map((s, i) => {
-      const base = i * 14;
+      const base = i * 18;
       vals.push(
         indexId, repoId, commitSha,
         s.scip_symbol, s.display_name, s.kind, s.language, s.file_path,
-        s.start_line, s.start_col, s.end_line, s.end_col, s.signature, s.doc
+        s.start_line, s.start_col, s.end_line, s.end_col,
+        s.body_start_line, s.body_start_col, s.body_end_line, s.body_end_col,
+        s.signature, s.doc
       );
-      return `($${base + 1},$${base + 2},$${base + 3},$${base + 4},$${base + 5},$${base + 6},$${base + 7},$${base + 8},$${base + 9},$${base + 10},$${base + 11},$${base + 12},$${base + 13},$${base + 14})`;
+      return `($${base + 1},$${base + 2},$${base + 3},$${base + 4},$${base + 5},$${base + 6},$${base + 7},$${base + 8},$${base + 9},$${base + 10},$${base + 11},$${base + 12},$${base + 13},$${base + 14},$${base + 15},$${base + 16},$${base + 17},$${base + 18})`;
     });
 
     await client.query(
       `INSERT INTO symbols
          (index_id, repo_id, commit_sha, scip_symbol, display_name, kind, language,
-          file_path, start_line, start_col, end_line, end_col, signature, doc)
+          file_path, start_line, start_col, end_line, end_col,
+          body_start_line, body_start_col, body_end_line, body_end_col,
+          signature, doc)
        VALUES ${ph.join(",")}
        ON CONFLICT DO NOTHING`,
       vals

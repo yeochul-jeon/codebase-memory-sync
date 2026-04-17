@@ -61,6 +61,8 @@ describe("MCP server integration", () => {
     expect(names).toContain("find_implementors");
     expect(names).toContain("get_dependencies");
     expect(names).toContain("get_impact_analysis");
+    expect(names).toContain("read_symbol_body");
+    expect(names).toContain("read_file_range");
   });
 
   it("list_projects returns text content", async () => {

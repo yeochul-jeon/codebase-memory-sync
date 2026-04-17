@@ -6,6 +6,7 @@ import {
   CreateBucketCommand,
 } from "@aws-sdk/client-s3";
 import { Readable } from "node:stream";
+import AdmZip from "adm-zip";
 import { config } from "../config.js";
 
 let client: S3Client | null = null;
@@ -56,6 +57,45 @@ export async function getScipBlob(key: string): Promise<Buffer> {
     chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array));
   }
   return Buffer.concat(chunks);
+}
+
+export async function putSourceBlob(key: string, data: Buffer): Promise<void> {
+  await getS3Client().send(
+    new PutObjectCommand({
+      Bucket: config.MINIO_BUCKET,
+      Key: key,
+      Body: data,
+      ContentType: "application/zip",
+    })
+  );
+}
+
+export async function getSourceBlob(key: string): Promise<Buffer> {
+  const resp = await getS3Client().send(
+    new GetObjectCommand({ Bucket: config.MINIO_BUCKET, Key: key })
+  );
+  if (!resp.Body) throw new Error(`Empty body for source key: ${key}`);
+  const stream = resp.Body as Readable;
+  const chunks: Buffer[] = [];
+  for await (const chunk of stream) {
+    chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array));
+  }
+  return Buffer.concat(chunks);
+}
+
+export function extractZipEntry(zipBuffer: Buffer, filePath: string): Buffer | null {
+  const zip = new AdmZip(zipBuffer);
+  const entry = zip.getEntry(filePath);
+  if (!entry) return null;
+  return zip.readFile(entry);
+}
+
+export async function getSourceZipEntry(
+  sourceKey: string,
+  filePath: string
+): Promise<Buffer | null> {
+  const zipBuffer = await getSourceBlob(sourceKey);
+  return extractZipEntry(zipBuffer, filePath);
 }
 
 export async function checkMinioHealth(): Promise<boolean> {

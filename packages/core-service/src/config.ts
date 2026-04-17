@@ -21,6 +21,7 @@ const schema = z.object({
   CMS_CLIENT_TOKEN: z.string(),
 
   MAX_SCIP_SIZE_MB: z.coerce.number().default(200),
+  MAX_SOURCE_SIZE_MB: z.coerce.number().default(200),
 });
 
 const parsed = schema.safeParse(process.env);

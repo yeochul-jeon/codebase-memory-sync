@@ -14,6 +14,7 @@ import { fileOverviewRoutes } from "./routes/file-overview.js";
 import { implementorsRoutes } from "./routes/implementors.js";
 import { dependenciesRoutes } from "./routes/dependencies.js";
 import { impactRoutes } from "./routes/impact.js";
+import { sourcesRoutes } from "./routes/sources.js";
 
 const app = Fastify({
   logger: {
@@ -27,8 +28,8 @@ const app = Fastify({
 // Plugins
 await app.register(multipart, {
   limits: {
-    fileSize: config.MAX_SCIP_SIZE_MB * 1024 * 1024,
-    files: 1,
+    fileSize: Math.max(config.MAX_SCIP_SIZE_MB, config.MAX_SOURCE_SIZE_MB) * 1024 * 1024,
+    files: 2,
   },
 });
 
@@ -44,6 +45,7 @@ await app.register(fileOverviewRoutes);
 await app.register(implementorsRoutes);
 await app.register(dependenciesRoutes);
 await app.register(impactRoutes);
+await app.register(sourcesRoutes);
 
 // Graceful shutdown
 const shutdown = async (signal: string): Promise<void> => {

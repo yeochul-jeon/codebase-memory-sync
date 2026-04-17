@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { getPool } from "../storage/postgres.js";
-import { putScipBlob } from "../storage/minio.js";
+import { putScipBlob, putSourceBlob } from "../storage/minio.js";
 import { verifyBearer } from "../auth/bearer.js";
 import { resolveConflict } from "../services/conflict.js";
 import { config } from "../config.js";
@@ -20,6 +20,7 @@ export async function uploadRoutes(app: FastifyInstance): Promise<void> {
 
       const fields: Record<string, string> = {};
       let scipBuffer: Buffer | null = null;
+      let sourceBuffer: Buffer | null = null;
 
       for await (const part of parts) {
         if (part.type === "field") {
@@ -31,7 +32,6 @@ export async function uploadRoutes(app: FastifyInstance): Promise<void> {
           for await (const chunk of part.file) {
             totalSize += chunk.length;
             if (totalSize > maxBytes) {
-              // Drain stream to avoid socket hang
               part.file.resume();
               return reply.status(413).send({
                 error: "payload_too_large",
@@ -41,6 +41,22 @@ export async function uploadRoutes(app: FastifyInstance): Promise<void> {
             chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array));
           }
           scipBuffer = Buffer.concat(chunks);
+        } else if (part.type === "file" && part.fieldname === "source") {
+          const chunks: Buffer[] = [];
+          let totalSize = 0;
+          const maxBytes = config.MAX_SOURCE_SIZE_MB * 1024 * 1024;
+          for await (const chunk of part.file) {
+            totalSize += chunk.length;
+            if (totalSize > maxBytes) {
+              part.file.resume();
+              return reply.status(413).send({
+                error: "source_too_large",
+                detail: `Source archive exceeds ${config.MAX_SOURCE_SIZE_MB}MB limit`,
+              });
+            }
+            chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk as Uint8Array));
+          }
+          sourceBuffer = Buffer.concat(chunks);
         }
       }
 
@@ -51,6 +67,21 @@ export async function uploadRoutes(app: FastifyInstance): Promise<void> {
       }
       if (!scipBuffer || scipBuffer.length === 0) {
         return reply.status(400).send({ error: "missing_scip", detail: "multipart field 'scip' with binary content is required" });
+      }
+
+      // source part validation (CI required, client forbidden)
+      const uploaderForSourceCheck = (request as UploaderRequest).uploader;
+      if (uploaderForSourceCheck === "ci" && (!sourceBuffer || sourceBuffer.length === 0)) {
+        return reply.status(400).send({
+          error: "missing_source",
+          detail: "CI uploads must include a 'source' multipart field (source.zip archive)",
+        });
+      }
+      if (uploaderForSourceCheck === "client" && sourceBuffer) {
+        return reply.status(400).send({
+          error: "source_not_allowed_for_client",
+          detail: "Client uploads must not include a 'source' field. Source is managed by CI uploads only.",
+        });
       }
 
       // Parse org/name
@@ -106,10 +137,17 @@ export async function uploadRoutes(app: FastifyInstance): Promise<void> {
 
         // Insert new index row (status=pending)
         const blobKey = `${org}/${name}/${commit}/${tool}.scip`;
+        const sourceBlobKey = sourceBuffer ? `${org}/${name}/${commit}/source.zip` : null;
+        const sourceSha256 = sourceBuffer ? createHash("sha256").update(sourceBuffer).digest("hex") : null;
+        const sourceBytes = sourceBuffer ? sourceBuffer.length : null;
+
         const indexRes = await client.query<{ id: string }>(
           `INSERT INTO indexes
-             (repo_id, commit_sha, branch, uploader, tool, tool_version, blob_key, blob_sha256, status)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, 'pending')
+             (repo_id, commit_sha, branch, uploader, tool, tool_version,
+              blob_key, blob_sha256,
+              source_blob_key, source_sha256, source_bytes,
+              status)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, 'pending')
            RETURNING id`,
           [
             repoId,
@@ -120,6 +158,9 @@ export async function uploadRoutes(app: FastifyInstance): Promise<void> {
             fields["tool_version"] ?? null,
             blobKey,
             blobSha256,
+            sourceBlobKey,
+            sourceSha256,
+            sourceBytes,
           ]
         );
         const indexId = indexRes.rows[0]!.id;
@@ -138,8 +179,11 @@ export async function uploadRoutes(app: FastifyInstance): Promise<void> {
 
         await client.query("COMMIT");
 
-        // Upload blob to MinIO (outside transaction — idempotent)
+        // Upload blobs to MinIO (outside transaction — idempotent)
         await putScipBlob(blobKey, scipBuffer);
+        if (sourceBuffer && sourceBlobKey) {
+          await putSourceBlob(sourceBlobKey, sourceBuffer);
+        }
 
         // Notify worker
         await pool.query("SELECT pg_notify('cms_index_ready', $1)", [indexId]);

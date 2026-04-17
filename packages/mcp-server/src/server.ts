@@ -9,6 +9,8 @@ import { handleGetFileOverview } from "./tools/get-file-overview.js";
 import { handleFindImplementors } from "./tools/find-implementors.js";
 import { handleGetDependencies } from "./tools/get-dependencies.js";
 import { handleGetImpactAnalysis } from "./tools/get-impact-analysis.js";
+import { handleReadSymbolBody } from "./tools/read-symbol-body.js";
+import { handleReadFileRange } from "./tools/read-file-range.js";
 
 export function createMcpServer(cmsClient: CmsClient): McpServer {
   const server = new McpServer({
@@ -239,6 +241,59 @@ export function createMcpServer(cmsClient: CmsClient): McpServer {
           ...(args.repo !== undefined ? { repo: args.repo } : {}),
           depth: args.depth,
           limit: args.limit,
+        }
+      )
+  );
+
+  // ── read_symbol_body ─────────────────────────────────────────────────────────
+  server.registerTool(
+    "read_symbol_body",
+    {
+      description:
+        "Read the source code body of a symbol (method, class, function). Returns the full source from the CI-uploaded source archive.",
+      inputSchema: {
+        scip_symbol: z
+          .string()
+          .min(1)
+          .describe("Canonical SCIP symbol string (obtained from search_symbols or get_symbol_detail)"),
+        repo: z.string().optional().describe("Filter by repo in 'org/name' format"),
+        commit: z.string().optional().describe("Specific commit SHA (defaults to latest indexed)"),
+      },
+    },
+    async (args) =>
+      handleReadSymbolBody(
+        { readSymbolBody: (sym, opts) => cmsClient.readSymbolBody(sym, opts) },
+        {
+          scip_symbol: args.scip_symbol,
+          ...(args.repo !== undefined ? { repo: args.repo } : {}),
+          ...(args.commit !== undefined ? { commit: args.commit } : {}),
+        }
+      )
+  );
+
+  // ── read_file_range ──────────────────────────────────────────────────────────
+  server.registerTool(
+    "read_file_range",
+    {
+      description:
+        "Read a range of lines from a source file. Returns raw source content from the CI-uploaded source archive.",
+      inputSchema: {
+        repo: z.string().min(1).describe("Repository in 'org/name' format"),
+        file_path: z.string().min(1).describe("Relative file path within the repo"),
+        start_line: z.number().int().min(1).describe("First line to read (1-indexed, inclusive)"),
+        end_line: z.number().int().min(1).describe("Last line to read (1-indexed, inclusive)"),
+        commit: z.string().optional().describe("Specific commit SHA (defaults to latest indexed)"),
+      },
+    },
+    async (args) =>
+      handleReadFileRange(
+        { readFileRange: (p) => cmsClient.readFileRange(p) },
+        {
+          repo: args.repo,
+          file_path: args.file_path,
+          start_line: args.start_line,
+          end_line: args.end_line,
+          ...(args.commit !== undefined ? { commit: args.commit } : {}),
         }
       )
   );

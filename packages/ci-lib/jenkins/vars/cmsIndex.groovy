@@ -46,7 +46,27 @@ def call(Map cfg = [:]) {
               ${indexerImg} /run.sh
         """
 
-        // 2. Upload to CMS
+        // 2. Package source archive (exclude build artifacts, binaries, VCS data)
+        sh """
+            zip -qr /work/source.zip . \
+              -x '.git/*' \
+              -x 'node_modules/*' \
+              -x 'target/*' \
+              -x 'build/*' \
+              -x 'dist/*' \
+              -x '.gradle/*' \
+              -x '.next/*' \
+              -x '.venv/*' \
+              -x '__pycache__/*' \
+              -x '*.jar' \
+              -x '*.class' \
+              -x '*.war' \
+              -x '*.png' \
+              -x '*.jpg' \
+              -x '*.pdf'
+        """
+
+        // 3. Upload SCIP + source to CMS
         sh """
             curl -fSs -X POST "${endpoint}/v1/scip/upload" \
               -H "Authorization: Bearer \$CMS_CI_TOKEN" \
@@ -57,6 +77,7 @@ def call(Map cfg = [:]) {
               -F "branch=${branch}" \
               -F "tool=${tool}" \
               -F "scip=@index.scip" \
+              -F "source=@source.zip" \
               -o /tmp/cms-upload.json
             cat /tmp/cms-upload.json
         """

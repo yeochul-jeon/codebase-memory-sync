@@ -173,6 +173,34 @@ export interface ImpactResult {
   impacted: ImpactEntry[];
 }
 
+export interface SymbolBodyResult {
+  repo: string;
+  commit_sha: string;
+  scip_symbol: string;
+  file_path: string;
+  start_line: number;
+  end_line: number;
+  content: string;
+  body_source: "enclosing_range" | "identifier_fallback";
+}
+
+export interface FileRangeParams {
+  repo: string;
+  file_path: string;
+  start_line: number;
+  end_line: number;
+  commit?: string;
+}
+
+export interface FileRangeResult {
+  repo: string;
+  commit_sha: string;
+  file_path: string;
+  start_line: number;
+  end_line: number;
+  content: string;
+}
+
 export class CmsClient {
   private readonly base: string;
   private readonly token: string | undefined;
@@ -295,5 +323,38 @@ export class CmsClient {
     if (res.status === 404) return null;
     if (!res.ok) throw new Error(`getImpactAnalysis failed: ${res.status}`);
     return res.json() as Promise<ImpactResult>;
+  }
+
+  async readSymbolBody(
+    scipSymbol: string,
+    opts?: { repo?: string; commit?: string }
+  ): Promise<SymbolBodyResult | null> {
+    const qs = new URLSearchParams({ scip_symbol: scipSymbol });
+    if (opts?.repo) qs.set("repo", opts.repo);
+    if (opts?.commit) qs.set("commit", opts.commit);
+    const res = await fetch(
+      `${this.base}/v1/sources/symbol?${qs.toString()}`,
+      { headers: this.headers() }
+    );
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`readSymbolBody failed: ${res.status}`);
+    return res.json() as Promise<SymbolBodyResult>;
+  }
+
+  async readFileRange(params: FileRangeParams): Promise<FileRangeResult | null> {
+    const qs = new URLSearchParams({
+      repo: params.repo,
+      file_path: params.file_path,
+      start_line: String(params.start_line),
+      end_line: String(params.end_line),
+    });
+    if (params.commit) qs.set("commit", params.commit);
+    const res = await fetch(
+      `${this.base}/v1/sources/file?${qs.toString()}`,
+      { headers: this.headers() }
+    );
+    if (res.status === 404) return null;
+    if (!res.ok) throw new Error(`readFileRange failed: ${res.status}`);
+    return res.json() as Promise<FileRangeResult>;
   }
 }

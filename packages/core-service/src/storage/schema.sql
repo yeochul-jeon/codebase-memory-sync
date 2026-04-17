@@ -148,3 +148,15 @@ CREATE INDEX IF NOT EXISTS idx_symrel_to
 -- repo-scoped queries
 CREATE INDEX IF NOT EXISTS idx_symrel_repo
   ON symbol_relationships (repo_id, commit_sha);
+
+-- ── Phase 2c migrations ───────────────────────────────────────────────────────
+-- source blob columns on indexes (CI-only source.zip storage, ADR-014)
+ALTER TABLE indexes ADD COLUMN IF NOT EXISTS source_blob_key TEXT;
+ALTER TABLE indexes ADD COLUMN IF NOT EXISTS source_sha256   TEXT;
+ALTER TABLE indexes ADD COLUMN IF NOT EXISTS source_bytes    BIGINT;
+
+-- body span columns on symbols (from SCIP Occurrence.enclosing_range, ADR-014)
+ALTER TABLE symbols ADD COLUMN IF NOT EXISTS body_start_line INT;
+ALTER TABLE symbols ADD COLUMN IF NOT EXISTS body_start_col  INT;
+ALTER TABLE symbols ADD COLUMN IF NOT EXISTS body_end_line   INT;
+ALTER TABLE symbols ADD COLUMN IF NOT EXISTS body_end_col    INT;

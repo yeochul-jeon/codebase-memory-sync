@@ -27,6 +27,10 @@ export interface ParsedSymbol {
   start_col: number;
   end_line: number;
   end_col: number;
+  body_start_line: number;
+  body_start_col: number;
+  body_end_line: number;
+  body_end_col: number;
   signature: string | null;
   doc: string | null;
 }
@@ -102,6 +106,7 @@ interface RawOccurrence {
   range?: number[];
   symbol?: string;
   symbolRoles?: number;
+  enclosingRange?: number[];
 }
 
 interface RawRelationship {
@@ -200,6 +205,10 @@ export async function parseScip(buffer: Buffer): Promise<ParsedIndex> {
       // Definition (role & 1) → emit a symbol row
       if (role & 1) {
         const info = symInfoMap.get(sym);
+        const enclosing = occ.enclosingRange ?? [];
+        const [bsl, bsc, bel, bec] = enclosing.length >= 3
+          ? decodeRange(enclosing)
+          : [sl, sc, el, ec];
         symbols.push({
           scip_symbol: sym,
           display_name: info?.displayName ?? null,
@@ -210,6 +219,10 @@ export async function parseScip(buffer: Buffer): Promise<ParsedIndex> {
           start_col: sc,
           end_line: el,
           end_col: ec,
+          body_start_line: bsl,
+          body_start_col: bsc,
+          body_end_line: bel,
+          body_end_col: bec,
           signature: null,
           doc: info?.docs.join("\n") ?? null,
         });
