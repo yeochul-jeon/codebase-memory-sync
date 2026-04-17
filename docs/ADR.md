@@ -183,7 +183,7 @@ MVP 속도 최우선. 외부 의존성 최소화 (상용 제품 제외, OSS + �
 
 **결정**: CI uploader는 `POST /v1/scip/upload` 동일 multipart 요청에 `.scip`와 함께 `source.zip` 아카이브를 전송한다. zip은 `{org}/{name}/{commit}/source.zip` key로 MinIO에 저장하고, `indexes.source_blob_key` 컬럼으로 주소 지정한다. 동시에 `scip-processor`는 SCIP `Occurrence.enclosing_range`를 파싱해 `symbols.body_start_line/col, body_end_line/col` 4개 컬럼에 저장한다. Client uploader는 source를 전송하지 않으며, client-only 인덱스에 대한 `read_symbol_body`/`read_file_range`는 404 + hint로 fail-fast한다.
 
-**zip 선택 이유**: central directory로 단일 파일 O(1) 랜덤 액세스. tar.gz는 단일 파일 추출에 O(N) 스캔 필요.
+**zip 선택 이유**: zip central directory는 로컬 파일 시스템에서 O(1) 랜덤 액세스를 제공하며, tar.gz는 단일 파일 추출에 O(N) 스캔이 필요하다. 단, 현재 구현(`minio.ts:getSourceBlob`)은 MinIO에서 매 요청마다 zip 전체를 다운로드·파싱하므로 네트워크 왕복 비용은 파일 크기에 비례한다. in-process 캐시 또는 S3 range request 최적화는 부하 실측 후 ADR-020에서 별도 검토한다.
 
 **이유**:
 - ADR-001/004 정합 — MinIO 기존 인프라 재사용, 새로운 외부 의존성 없음
