@@ -13,6 +13,79 @@
 
 ---
 
+## 시스템 아키텍처
+
+```mermaid
+flowchart TD
+    subgraph CI["CI 파이프라인"]
+        J["Jenkins\n(cmsIndex.groovy)"]
+        IDX["SCIP 인덱서\n(scip-java / scip-typescript)"]
+        J -->|"Docker 실행"| IDX
+    end
+
+    subgraph Infra["인프라 (Docker Compose)"]
+        PG[("PostgreSQL 15\n:5432")]
+        MIO[("MinIO\n:9000")]
+    end
+
+    subgraph CoreService["packages/core-service  (Fastify :3000)"]
+        UPL["POST /v1/scip/upload\n(Bearer CI token)"]
+        REST["GET /v1/repos\nGET /v1/search\nGET /v1/symbols\nGET /v1/symbols/references\nGET /v1/files/overview\nGET /v1/symbols/implementors\nGET /v1/symbols/dependencies\nGET /v1/symbols/impact"]
+        AUTH["verifyBearer\n(ci / client)"]
+        CONFLICT["conflict.ts\n(CI-wins)"]
+        UPL --> AUTH --> CONFLICT
+    end
+
+    subgraph Processor["packages/scip-processor  (worker)"]
+        W["worker.ts\n(LISTEN)"]
+        P["parser.ts\n(protobufjs)"]
+        M["materialize.ts\n(bulk INSERT)"]
+        W --> P --> M
+    end
+
+    subgraph MCPServer["packages/mcp-server  (stdio)"]
+        MCPS["McpServer\n(MCP SDK)"]
+        TOOLS["8 Tools\nlist_projects\nsearch_symbols\nget_symbol_detail\nget_symbol_references\nget_file_overview\nfind_implementors\nget_dependencies\nget_impact_analysis"]
+        CLIENT["CmsClient\n(HTTP + Bearer token)"]
+        MCPS --> TOOLS --> CLIENT
+    end
+
+    subgraph External["외부 클라이언트"]
+        AI["AI Agent\n(Claude Code / IDE)"]
+        DEV["개발자\n(curl / Web UI)"]
+    end
+
+    IDX -->|"POST /v1/scip/upload\n(index.scip)"| UPL
+    UPL -->|"PUT blob"| MIO
+    UPL -->|"INSERT + pg_notify\n(cms_index_ready)"| PG
+    PG -->|"NOTIFY"| W
+    W -->|"GET blob"| MIO
+    M -->|"bulk INSERT\nsymbols / occurrences\nsymbol_relationships"| PG
+    REST -->|"SELECT"| PG
+    CLIENT -->|"HTTP GET\n(CMS_ENDPOINT)"| REST
+    AI -->|"MCP stdio"| MCPS
+    DEV -->|"HTTP"| REST
+```
+
+### 주요 데이터 흐름
+
+| 단계 | 경로 |
+|------|------|
+| **인덱싱** | Jenkins → scip-indexer Docker → `POST /v1/scip/upload` → MinIO(blob) + Postgres(index row) + `pg_notify` |
+| **파싱** | scip-processor `LISTEN` → MinIO에서 blob 다운로드 → protobuf 디코드 → bulk INSERT (symbols / occurrences / symbol_relationships) |
+| **조회** | AI Agent → MCP stdio → `CmsClient` HTTP GET → core-service SELECT → Postgres |
+
+### 패키지 역할 요약
+
+| 패키지 | 역할 | 통신 |
+|--------|------|------|
+| `core-service` | REST API 게이트웨이, 업로드 수신, 쿼리 제공 | HTTP (inbound) + Postgres + MinIO |
+| `scip-processor` | 비동기 SCIP 파싱 + Postgres 적재 | Postgres LISTEN/NOTIFY + MinIO |
+| `mcp-server` | MCP stdio 브리지, 8개 tool 노출 | MCP stdio (inbound) + HTTP (outbound → core-service) |
+| `ci-lib` | Jenkins shared library, SCIP 생성 + 업로드 자동화 | HTTP → core-service |
+
+---
+
 ## 완료된 작업
 
 ### Phase 0 — 초기 구현 (2026-04-16)
