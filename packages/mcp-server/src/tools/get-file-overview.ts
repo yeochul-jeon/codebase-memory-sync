@@ -9,6 +9,7 @@ export interface GetFileOverviewArgs {
   repo: string;
   file_path: string;
   commit?: string;
+  branch?: string;
 }
 
 export async function handleGetFileOverview(
@@ -20,6 +21,7 @@ export async function handleGetFileOverview(
     file_path: args.file_path,
   };
   if (args.commit !== undefined) params.commit = args.commit;
+  if (args.branch !== undefined) params.branch = args.branch;
 
   const result = await deps.getFileOverview(params);
 

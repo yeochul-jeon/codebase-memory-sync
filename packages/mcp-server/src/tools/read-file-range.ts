@@ -11,19 +11,21 @@ export interface ReadFileRangeArgs {
   start_line: number;
   end_line: number;
   commit?: string;
+  branch?: string;
 }
 
 export async function handleReadFileRange(
   deps: ReadFileRangeDeps,
   args: ReadFileRangeArgs
 ): Promise<{ content: [{ type: "text"; text: string }] }> {
-  const params: { repo: string; file_path: string; start_line: number; end_line: number; commit?: string } = {
+  const params: FileRangeParams = {
     repo: args.repo,
     file_path: args.file_path,
     start_line: args.start_line,
     end_line: args.end_line,
   };
   if (args.commit !== undefined) params.commit = args.commit;
+  if (args.branch !== undefined) params.branch = args.branch;
   const result = await deps.readFileRange(params);
 
   if (!result) {

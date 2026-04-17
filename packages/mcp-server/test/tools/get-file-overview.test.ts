@@ -1,4 +1,4 @@
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import {
   handleGetFileOverview,
   type GetFileOverviewDeps,
@@ -97,6 +97,18 @@ describe("handleGetFileOverview", () => {
     });
     expect(result.content[0]!.text).toContain("No symbols indexed");
     expect(result.content[0]!.text).toContain("Nonexistent.java");
+  });
+
+  it("passes branch param to getFileOverview", async () => {
+    const getFileOverview = vi.fn().mockResolvedValue(null);
+    await handleGetFileOverview({ getFileOverview }, {
+      repo: "myorg/myapp",
+      file_path: "src/Foo.java",
+      branch: "feature",
+    });
+    expect(getFileOverview).toHaveBeenCalledWith(
+      expect.objectContaining({ branch: "feature" })
+    );
   });
 
   it("passes repo, file_path, and commit to client", async () => {

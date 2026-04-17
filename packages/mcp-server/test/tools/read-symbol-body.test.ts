@@ -54,6 +54,19 @@ describe("handleReadSymbolBody", () => {
     expect(result.content[0]?.text).toContain("not found");
   });
 
+  it("passes branch param to readSymbolBody", async () => {
+    const readSymbolBody = vi.fn().mockResolvedValue(null);
+    await handleReadSymbolBody({ readSymbolBody }, {
+      scip_symbol: SYMBOL,
+      repo: "myorg/myapp",
+      branch: "feature",
+    });
+    expect(readSymbolBody).toHaveBeenCalledWith(
+      SYMBOL,
+      expect.objectContaining({ branch: "feature" })
+    );
+  });
+
   it("returns not-available message when source is not available (404-style null with hint)", async () => {
     const deps: ReadSymbolBodyDeps = {
       readSymbolBody: vi.fn().mockResolvedValue(null),

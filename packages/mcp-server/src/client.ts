@@ -84,6 +84,7 @@ export interface FileOverviewParams {
   repo: string;
   file_path: string;
   commit?: string;
+  branch?: string;
 }
 
 export interface FileSymbol {
@@ -190,6 +191,7 @@ export interface FileRangeParams {
   start_line: number;
   end_line: number;
   commit?: string;
+  branch?: string;
 }
 
 export interface FileRangeResult {
@@ -267,6 +269,7 @@ export class CmsClient {
       file_path: params.file_path,
     });
     if (params.commit) qs.set("commit", params.commit);
+    if (params.branch) qs.set("branch", params.branch);
     const res = await fetch(
       `${this.base}/v1/files/overview?${qs.toString()}`,
       { headers: this.headers() }
@@ -327,11 +330,12 @@ export class CmsClient {
 
   async readSymbolBody(
     scipSymbol: string,
-    opts?: { repo?: string; commit?: string }
+    opts?: { repo?: string; commit?: string; branch?: string }
   ): Promise<SymbolBodyResult | null> {
     const qs = new URLSearchParams({ scip_symbol: scipSymbol });
     if (opts?.repo) qs.set("repo", opts.repo);
     if (opts?.commit) qs.set("commit", opts.commit);
+    if (opts?.branch) qs.set("branch", opts.branch);
     const res = await fetch(
       `${this.base}/v1/sources/symbol?${qs.toString()}`,
       { headers: this.headers() }
@@ -349,6 +353,7 @@ export class CmsClient {
       end_line: String(params.end_line),
     });
     if (params.commit) qs.set("commit", params.commit);
+    if (params.branch) qs.set("branch", params.branch);
     const res = await fetch(
       `${this.base}/v1/sources/file?${qs.toString()}`,
       { headers: this.headers() }

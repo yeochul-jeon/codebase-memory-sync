@@ -68,6 +68,20 @@ describe("handleReadFileRange", () => {
     expect(result.content[0]?.text).toContain("abc123de");
   });
 
+  it("passes branch param to readFileRange", async () => {
+    const readFileRange = vi.fn().mockResolvedValue(null);
+    await handleReadFileRange({ readFileRange }, {
+      repo: "myorg/myapp",
+      file_path: "src/Foo.java",
+      start_line: 1,
+      end_line: 10,
+      branch: "feature",
+    });
+    expect(readFileRange).toHaveBeenCalledWith(
+      expect.objectContaining({ branch: "feature" })
+    );
+  });
+
   it("passes commit param through to client when provided", async () => {
     const mockFn = vi.fn().mockResolvedValue(MOCK_RESULT);
     const deps: ReadFileRangeDeps = { readFileRange: mockFn };

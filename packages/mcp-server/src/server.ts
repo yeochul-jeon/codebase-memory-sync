@@ -85,6 +85,7 @@ export function createMcpServer(cmsClient: CmsClient): McpServer {
         repo: z.string().min(1).describe("Repository in 'org/name' format"),
         file_path: z.string().min(1).describe("Relative file path within the repo"),
         commit: z.string().optional().describe("Specific commit SHA (defaults to latest indexed)"),
+        branch: z.string().optional().describe("Branch name (defaults to repo default_branch when commit is omitted)"),
       },
     },
     async (args) =>
@@ -96,6 +97,7 @@ export function createMcpServer(cmsClient: CmsClient): McpServer {
           repo: args.repo,
           file_path: args.file_path,
           ...(args.commit !== undefined ? { commit: args.commit } : {}),
+          ...(args.branch !== undefined ? { branch: args.branch } : {}),
         }
       )
   );
@@ -258,6 +260,7 @@ export function createMcpServer(cmsClient: CmsClient): McpServer {
           .describe("Canonical SCIP symbol string (obtained from search_symbols or get_symbol_detail)"),
         repo: z.string().optional().describe("Filter by repo in 'org/name' format"),
         commit: z.string().optional().describe("Specific commit SHA (defaults to latest indexed)"),
+        branch: z.string().optional().describe("Branch name (defaults to repo default_branch when commit is omitted)"),
       },
     },
     async (args) =>
@@ -267,6 +270,7 @@ export function createMcpServer(cmsClient: CmsClient): McpServer {
           scip_symbol: args.scip_symbol,
           ...(args.repo !== undefined ? { repo: args.repo } : {}),
           ...(args.commit !== undefined ? { commit: args.commit } : {}),
+          ...(args.branch !== undefined ? { branch: args.branch } : {}),
         }
       )
   );
@@ -283,6 +287,7 @@ export function createMcpServer(cmsClient: CmsClient): McpServer {
         start_line: z.number().int().min(1).describe("First line to read (1-indexed, inclusive)"),
         end_line: z.number().int().min(1).describe("Last line to read (1-indexed, inclusive)"),
         commit: z.string().optional().describe("Specific commit SHA (defaults to latest indexed)"),
+        branch: z.string().optional().describe("Branch name (defaults to repo default_branch when commit is omitted)"),
       },
     },
     async (args) =>
@@ -294,6 +299,7 @@ export function createMcpServer(cmsClient: CmsClient): McpServer {
           start_line: args.start_line,
           end_line: args.end_line,
           ...(args.commit !== undefined ? { commit: args.commit } : {}),
+          ...(args.branch !== undefined ? { branch: args.branch } : {}),
         }
       )
   );

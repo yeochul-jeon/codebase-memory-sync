@@ -4,7 +4,7 @@ import { shortSha } from "../format.js";
 export interface ReadSymbolBodyDeps {
   readSymbolBody(
     scipSymbol: string,
-    opts?: { repo?: string; commit?: string }
+    opts?: { repo?: string; commit?: string; branch?: string }
   ): Promise<SymbolBodyResult | null>;
 }
 
@@ -12,15 +12,17 @@ export interface ReadSymbolBodyArgs {
   scip_symbol: string;
   repo?: string;
   commit?: string;
+  branch?: string;
 }
 
 export async function handleReadSymbolBody(
   deps: ReadSymbolBodyDeps,
   args: ReadSymbolBodyArgs
 ): Promise<{ content: [{ type: "text"; text: string }] }> {
-  const opts: { repo?: string; commit?: string } = {};
+  const opts: { repo?: string; commit?: string; branch?: string } = {};
   if (args.repo !== undefined) opts.repo = args.repo;
   if (args.commit !== undefined) opts.commit = args.commit;
+  if (args.branch !== undefined) opts.branch = args.branch;
   const result = await deps.readSymbolBody(args.scip_symbol, opts);
 
   if (!result) {
