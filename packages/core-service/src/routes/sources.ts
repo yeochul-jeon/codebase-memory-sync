@@ -196,8 +196,16 @@ export async function sourcesRoutes(app: FastifyInstance): Promise<void> {
 
       // Determine body span
       const hasBodySpan = row.body_start_line !== null && row.body_end_line !== null;
-      const bodyStartLine = hasBodySpan ? row.body_start_line! : row.start_line;
-      const bodyEndLine = hasBodySpan ? row.body_end_line! : row.start_line;
+      let bodyStartLine: number;
+      let bodyEndLine: number;
+      if (hasBodySpan) {
+        bodyStartLine = row.body_start_line!;
+        bodyEndLine = row.body_end_line!;
+      } else {
+        const totalLines = fullContent.split("\n").length;
+        bodyStartLine = Math.max(1, row.start_line - 10);
+        bodyEndLine = Math.min(totalLines, row.start_line + 10);
+      }
       const bodySource = hasBodySpan ? "enclosing_range" : "identifier_fallback";
 
       const content = extractLines(fullContent, bodyStartLine, bodyEndLine);

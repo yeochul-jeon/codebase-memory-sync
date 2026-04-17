@@ -35,6 +35,8 @@ const TEST_ORG = "test-sources-route";
 const TEST_REPO = "srcapp";
 const TEST_COMMIT = "aabb11223344556677889900aabbccddeeff1122";
 const TEST_SYMBOL = "scip-java maven com.example:srcapp 1.0 com/example/Foo#bar().";
+const FALLBACK_SYMBOL = "scip-java maven com.example:srcapp 1.0 com/example/Foo#x.";
+const BOUNDARY_SYMBOL = "scip-java maven com.example:srcapp 1.0 com/example/Foo#.";
 const JAVA_CONTENT = [
   "package com.example;",
   "",
@@ -97,6 +99,28 @@ beforeAll(async () => {
              6, 4, 8, 5)
      ON CONFLICT DO NOTHING`,
     [indexId, repoId, TEST_COMMIT, TEST_SYMBOL]
+  );
+
+  // Fallback test용: body_*_line NULL, start_line=5
+  await pool.query(
+    `INSERT INTO symbols
+       (index_id, repo_id, commit_sha, scip_symbol, display_name, kind, language,
+        file_path, start_line, start_col, end_line, end_col)
+     VALUES ($1, $2, $3, $4, 'x', 'field', 'java',
+             'src/Foo.java', 5, 16, 5, 17)
+     ON CONFLICT DO NOTHING`,
+    [indexId, repoId, TEST_COMMIT, FALLBACK_SYMBOL]
+  );
+
+  // Boundary test용: body_*_line NULL, start_line=3 (파일 앞쪽)
+  await pool.query(
+    `INSERT INTO symbols
+       (index_id, repo_id, commit_sha, scip_symbol, display_name, kind, language,
+        file_path, start_line, start_col, end_line, end_col)
+     VALUES ($1, $2, $3, $4, 'Foo', 'class', 'java',
+             'src/Foo.java', 3, 13, 3, 16)
+     ON CONFLICT DO NOTHING`,
+    [indexId, repoId, TEST_COMMIT, BOUNDARY_SYMBOL]
   );
 
   // Set up MinIO mock to return our zip
@@ -235,5 +259,43 @@ describe("GET /v1/sources/symbol", () => {
     });
     expect(res.statusCode).toBe(404);
     expect(JSON.parse(res.body).error).toBe("symbol_not_found");
+  });
+
+  it("returns ±10 line range when body span is missing (identifier_fallback)", async () => {
+    if (!available) return;
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/v1/sources/symbol?scip_symbol=${encodeURIComponent(FALLBACK_SYMBOL)}&repo=${TEST_ORG}/${TEST_REPO}&commit=${TEST_COMMIT}`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    const json = JSON.parse(res.body) as {
+      start_line: number; end_line: number; content: string; body_source: string;
+    };
+    expect(json.body_source).toBe("identifier_fallback");
+    // JAVA_CONTENT는 10줄. start_line=5 → max(1, 5-10)=1, min(10, 5+10)=10
+    expect(json.start_line).toBe(1);
+    expect(json.end_line).toBe(10);
+    expect(json.content).toContain("package com.example");
+    expect(json.content.split("\n").length).toBe(10);
+  });
+
+  it("caps to file boundaries when symbol is near start of file", async () => {
+    if (!available) return;
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/v1/sources/symbol?scip_symbol=${encodeURIComponent(BOUNDARY_SYMBOL)}&repo=${TEST_ORG}/${TEST_REPO}&commit=${TEST_COMMIT}`,
+    });
+
+    expect(res.statusCode).toBe(200);
+    const json = JSON.parse(res.body) as {
+      start_line: number; end_line: number; body_source: string;
+    };
+    expect(json.body_source).toBe("identifier_fallback");
+    // start_line=3 → max(1, 3-10)=1 (하한 cap), min(10, 3+10)=10 (상한 cap)
+    expect(json.start_line).toBe(1);
+    expect(json.end_line).toBe(10);
   });
 });
