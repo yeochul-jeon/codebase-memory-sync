@@ -19,6 +19,7 @@ const DB_CONFIG = {
 const TEST_ORG = "test-file-overview";
 const TEST_REPO = "hello";
 const TEST_COMMIT = "cc112233445566778899aabbccddeeff00112233";
+const NEWER_COMMIT_FO = "eeeeffff11223344556677889900aabbccddeeff";
 const TEST_FILE = "src/com/example/OrderService.java";
 
 let pool: pg.Pool;
@@ -64,6 +65,42 @@ beforeAll(async () => {
     [indexId, repoId, TEST_COMMIT, TEST_FILE]
   );
 
+  // NEWER_COMMIT_FO index (feature branch, newer created_at) for commit-omission tests
+  const ixNewer = await pool.query<{ id: string }>(
+    `INSERT INTO indexes (repo_id, commit_sha, branch, uploader, tool, status)
+     VALUES ($1, $2, 'feature', 'ci', 'scip-test', 'ready')
+     ON CONFLICT (repo_id, commit_sha, tool) WHERE status NOT IN ('failed', 'reclaiming') DO UPDATE SET status = 'ready' RETURNING id`,
+    [repoId, NEWER_COMMIT_FO]
+  );
+  const newerIndexId = ixNewer.rows[0]!.id;
+
+  // Same file symbols in NEWER_COMMIT_FO so the route returns 200 even on wrong commit
+  await pool.query(
+    `INSERT INTO symbols
+       (index_id, repo_id, commit_sha, scip_symbol, display_name, kind, language,
+        file_path, start_line, start_col, end_line, end_col)
+     VALUES
+       ($1, $2, $3, 'scip-test OrderService#OrderService().', 'OrderService', 'class', 'java', $4, 1, 0, 1, 12)
+     ON CONFLICT DO NOTHING`,
+    [newerIndexId, repoId, NEWER_COMMIT_FO, TEST_FILE]
+  );
+
+  // repo_head: main → TEST_COMMIT (default_branch), feature → NEWER_COMMIT_FO
+  await pool.query(
+    `INSERT INTO repo_head (repo_id, branch, commit_sha, index_id)
+     VALUES ($1, 'main', $2, $3)
+     ON CONFLICT (repo_id, branch) DO UPDATE
+       SET commit_sha = EXCLUDED.commit_sha, index_id = EXCLUDED.index_id`,
+    [repoId, TEST_COMMIT, indexId]
+  );
+  await pool.query(
+    `INSERT INTO repo_head (repo_id, branch, commit_sha, index_id)
+     VALUES ($1, 'feature', $2, $3)
+     ON CONFLICT (repo_id, branch) DO UPDATE
+       SET commit_sha = EXCLUDED.commit_sha, index_id = EXCLUDED.index_id`,
+    [repoId, NEWER_COMMIT_FO, newerIndexId]
+  );
+
   app = await buildApp(fileOverviewRoutes);
 });
 
@@ -89,7 +126,8 @@ describe("GET /v1/files/overview", () => {
 
     const url =
       `/v1/files/overview?repo=${encodeURIComponent(`${TEST_ORG}/${TEST_REPO}`)}` +
-      `&file_path=${encodeURIComponent(TEST_FILE)}`;
+      `&file_path=${encodeURIComponent(TEST_FILE)}` +
+      `&commit=${encodeURIComponent(TEST_COMMIT)}`;
     const res = await app.inject({ method: "GET", url });
     expect(res.statusCode).toBe(200);
 
@@ -169,5 +207,18 @@ describe("GET /v1/files/overview", () => {
     const res = await app.inject({ method: "GET", url });
     expect(res.statusCode).toBe(404);
     expect(res.json<{ error: string }>().error).toBe("file_not_indexed");
+  });
+
+  it("resolves omitted commit via repo_head(default_branch), not latest created_at", async () => {
+    if (!available) return;
+    // NEWER_COMMIT_FO is on 'feature' branch with a later created_at.
+    // repo_head(main) points to TEST_COMMIT.
+    // Omitting commit must return TEST_COMMIT, not NEWER_COMMIT_FO.
+    const url =
+      `/v1/files/overview?repo=${encodeURIComponent(`${TEST_ORG}/${TEST_REPO}`)}` +
+      `&file_path=${encodeURIComponent(TEST_FILE)}`;
+    const res = await app.inject({ method: "GET", url });
+    expect(res.statusCode).toBe(200);
+    expect(res.json<{ commit_sha: string }>().commit_sha).toBe(TEST_COMMIT);
   });
 });

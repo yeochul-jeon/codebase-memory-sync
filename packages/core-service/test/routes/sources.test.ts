@@ -34,6 +34,7 @@ const DB_CONFIG = {
 const TEST_ORG = "test-sources-route";
 const TEST_REPO = "srcapp";
 const TEST_COMMIT = "aabb11223344556677889900aabbccddeeff1122";
+const NEWER_COMMIT = "ddddeeee11223344556677889900aabbccddeeff";
 const TEST_SYMBOL = "scip-java maven com.example:srcapp 1.0 com/example/Foo#bar().";
 const FALLBACK_SYMBOL = "scip-java maven com.example:srcapp 1.0 com/example/Foo#x.";
 const BOUNDARY_SYMBOL = "scip-java maven com.example:srcapp 1.0 com/example/Foo#.";
@@ -121,6 +122,46 @@ beforeAll(async () => {
              'src/Foo.java', 3, 13, 3, 16)
      ON CONFLICT DO NOTHING`,
     [indexId, repoId, TEST_COMMIT, BOUNDARY_SYMBOL]
+  );
+
+  // NEWER_COMMIT index (feature branch) — newer created_at for commit-omission tests
+  const ixNewer = await pool.query<{ id: string }>(
+    `INSERT INTO indexes
+       (repo_id, commit_sha, branch, uploader, tool, status, source_blob_key)
+     VALUES ($1, $2, 'feature', 'ci', 'scip-java', 'ready', $3)
+     ON CONFLICT (repo_id, commit_sha, tool) WHERE status NOT IN ('failed', 'reclaiming') DO UPDATE
+       SET status = 'ready', source_blob_key = $3 RETURNING id`,
+    [repoId, NEWER_COMMIT, sourceBlobKey]
+  );
+  const newerIndexId = ixNewer.rows[0]!.id;
+
+  // Same symbol in NEWER_COMMIT for /sources/symbol commit-omission test
+  await pool.query(
+    `INSERT INTO symbols
+       (index_id, repo_id, commit_sha, scip_symbol, display_name, kind, language,
+        file_path, start_line, start_col, end_line, end_col,
+        body_start_line, body_start_col, body_end_line, body_end_col)
+     VALUES ($1, $2, $3, $4, 'bar', 'method', 'java',
+             'src/Foo.java', 6, 4, 6, 18,
+             6, 4, 8, 5)
+     ON CONFLICT DO NOTHING`,
+    [newerIndexId, repoId, NEWER_COMMIT, TEST_SYMBOL]
+  );
+
+  // repo_head: main → TEST_COMMIT (default_branch), feature → NEWER_COMMIT
+  await pool.query(
+    `INSERT INTO repo_head (repo_id, branch, commit_sha, index_id)
+     VALUES ($1, 'main', $2, $3)
+     ON CONFLICT (repo_id, branch) DO UPDATE
+       SET commit_sha = EXCLUDED.commit_sha, index_id = EXCLUDED.index_id`,
+    [repoId, TEST_COMMIT, indexId]
+  );
+  await pool.query(
+    `INSERT INTO repo_head (repo_id, branch, commit_sha, index_id)
+     VALUES ($1, 'feature', $2, $3)
+     ON CONFLICT (repo_id, branch) DO UPDATE
+       SET commit_sha = EXCLUDED.commit_sha, index_id = EXCLUDED.index_id`,
+    [repoId, NEWER_COMMIT, newerIndexId]
   );
 
   // Set up MinIO mock to return our zip
@@ -297,5 +338,66 @@ describe("GET /v1/sources/symbol", () => {
     // start_line=3 → max(1, 3-10)=1 (하한 cap), min(10, 3+10)=10 (상한 cap)
     expect(json.start_line).toBe(1);
     expect(json.end_line).toBe(10);
+  });
+});
+
+describe("commit omission semantics", () => {
+  it("uses repo_head(default_branch) when commit is omitted for /v1/sources/file", async () => {
+    if (!available) return;
+    // NEWER_COMMIT is on 'feature' branch; repo_head(main) points to TEST_COMMIT.
+    // Omitting commit should resolve to TEST_COMMIT, not NEWER_COMMIT.
+    const res = await app.inject({
+      method: "GET",
+      url: `/v1/sources/file?repo=${TEST_ORG}/${TEST_REPO}&file_path=src/Foo.java&start_line=1&end_line=3`,
+    });
+    expect(res.statusCode).toBe(200);
+    const json = JSON.parse(res.body) as { commit_sha: string };
+    expect(json.commit_sha).toBe(TEST_COMMIT);
+  });
+
+  it("uses repo_head(default_branch) for /v1/sources/symbol when commit is omitted", async () => {
+    if (!available) return;
+    // NEWER_COMMIT has TEST_SYMBOL too, and its created_at is later.
+    // Current impl uses ORDER BY created_at DESC → returns NEWER_COMMIT. Should be TEST_COMMIT.
+    const res = await app.inject({
+      method: "GET",
+      url: `/v1/sources/symbol?scip_symbol=${encodeURIComponent(TEST_SYMBOL)}&repo=${TEST_ORG}/${TEST_REPO}`,
+    });
+    expect(res.statusCode).toBe(200);
+    const json = JSON.parse(res.body) as { commit_sha: string };
+    expect(json.commit_sha).toBe(TEST_COMMIT);
+  });
+
+  it("returns 404 index_not_found with default branch in detail when repo_head has no row", async () => {
+    if (!available) return;
+    // Use a repo with no repo_head entry
+    const noHeadOrg = "test-sources-no-head";
+    const noHeadRepo = "app";
+    const noHeadCommit = "aaaa00001111222233334444555566667777888a";
+    const r2 = await pool.query<{ id: string }>(
+      `INSERT INTO repos (org, name) VALUES ($1, $2)
+       ON CONFLICT (org, name) DO UPDATE SET updated_at = NOW() RETURNING id`,
+      [noHeadOrg, noHeadRepo]
+    );
+    const r2Id = r2.rows[0]!.id;
+    await pool.query(
+      `INSERT INTO indexes (repo_id, commit_sha, branch, uploader, tool, status)
+       VALUES ($1, $2, NULL, 'ci', 'scip-java', 'ready')
+       ON CONFLICT (repo_id, commit_sha, tool) WHERE status NOT IN ('failed', 'reclaiming') DO UPDATE SET status='ready'`,
+      [r2Id, noHeadCommit]
+    );
+    // repo_head row intentionally absent
+
+    const res = await app.inject({
+      method: "GET",
+      url: `/v1/sources/file?repo=${noHeadOrg}/${noHeadRepo}&file_path=src/Foo.java&start_line=1&end_line=3`,
+    });
+    expect(res.statusCode).toBe(404);
+    const json = JSON.parse(res.body) as { error: string; detail?: string };
+    expect(json.error).toBe("index_not_found");
+    expect(json.detail).toBeDefined();
+    expect(json.detail!).toContain("'main'");
+
+    await pool.query("DELETE FROM repos WHERE org = $1 AND name = $2", [noHeadOrg, noHeadRepo]);
   });
 });

@@ -1,5 +1,6 @@
 import type { FastifyInstance } from "fastify";
 import { getPool } from "../storage/postgres.js";
+import { parseRepo, resolveCommit } from "../services/commit-resolver.js";
 
 export async function fileOverviewRoutes(app: FastifyInstance): Promise<void> {
   app.get<{
@@ -25,66 +26,21 @@ export async function fileOverviewRoutes(app: FastifyInstance): Promise<void> {
       });
     }
 
-    const parts = repo.trim().split("/");
-    if (parts.length !== 2 || !parts[0] || !parts[1]) {
+    const parsed = parseRepo(repo.trim());
+    if (!parsed) {
       return reply.status(400).send({
         error: "invalid_repo",
         detail: "repo must be in 'org/name' format",
       });
     }
-    const [org, name] = parts as [string, string];
+    const { org, name } = parsed;
 
     const pool = getPool();
-
-    // Resolve repo
-    const repoRes = await pool.query<{ id: string }>(
-      `SELECT id FROM repos WHERE org = $1 AND name = $2`,
-      [org, name]
-    );
-    if (repoRes.rows.length === 0) {
-      return reply.status(404).send({
-        error: "repo_not_found",
-        detail: `Repo not found: ${repo}`,
-      });
+    const r = await resolveCommit(pool, { org, name, commit: commit?.trim() });
+    if (!r.ok) {
+      return reply.status(r.error.status).send({ error: r.error.code, detail: r.error.detail });
     }
-    const repoId = repoRes.rows[0]!.id;
-
-    // Resolve index: prefer commit-specific, else latest ready
-    let indexId: string;
-    let commitSha: string;
-
-    if (commit) {
-      const ixRes = await pool.query<{ id: string; commit_sha: string }>(
-        `SELECT id, commit_sha FROM indexes
-         WHERE repo_id = $1 AND commit_sha = $2 AND status = 'ready'
-         ORDER BY created_at DESC LIMIT 1`,
-        [repoId, commit.trim()]
-      );
-      if (ixRes.rows.length === 0) {
-        return reply.status(404).send({
-          error: "index_not_found",
-          detail: `No ready index found for ${repo}@${commit}`,
-        });
-      }
-      indexId = ixRes.rows[0]!.id;
-      commitSha = ixRes.rows[0]!.commit_sha;
-    } else {
-      const ixRes = await pool.query<{ id: string; commit_sha: string }>(
-        `SELECT i.id, i.commit_sha
-         FROM indexes i
-         WHERE i.repo_id = $1 AND i.status = 'ready'
-         ORDER BY i.created_at DESC LIMIT 1`,
-        [repoId]
-      );
-      if (ixRes.rows.length === 0) {
-        return reply.status(404).send({
-          error: "index_not_found",
-          detail: `No ready index found for ${repo}`,
-        });
-      }
-      indexId = ixRes.rows[0]!.id;
-      commitSha = ixRes.rows[0]!.commit_sha;
-    }
+    const { indexId, commitSha } = r.value;
 
     // Fetch symbols in the file
     const symRes = await pool.query<{
@@ -110,7 +66,7 @@ export async function fileOverviewRoutes(app: FastifyInstance): Promise<void> {
     if (symRes.rows.length === 0) {
       return reply.status(404).send({
         error: "file_not_indexed",
-        detail: `No symbols indexed for ${file_path} in ${repo}`,
+        detail: `No symbols indexed for ${file_path} in ${org}/${name}`,
       });
     }
 

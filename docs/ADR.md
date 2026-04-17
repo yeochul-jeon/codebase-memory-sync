@@ -305,3 +305,35 @@ reclaiming ─(blob DELETE 실패)→ reclaiming (retry queue)
 **참조**:
 - ADR-014 — Two-Phase Replace 상태 머신 (Part 1의 전제 구현)
 - ADR-015 — Phase 1 운영 정책 정리 목표
+
+---
+
+## ADR-017 — commit 미지정 조회 semantics 통일 (`repo_head(default_branch)`)
+
+**날짜**: 2026-04-17
+**상태**: 결정됨
+
+**Context**:
+`docs/reviews/architecture-review-2026-04-17.md` P1 이슈. `GET /v1/sources/file`, `GET /v1/sources/symbol`, `GET /v1/files/overview` 세 엔드포인트가 `commit` 쿼리 파라미터 미지정 시 서로 다른 전략으로 commit을 해석했다:
+- `sources/file`: `repo_head` JOIN, 브랜치 필터 없음 (`LIMIT 1`)
+- `sources/symbol`: `indexes ORDER BY created_at DESC`
+- `files/overview`: `indexes ORDER BY created_at DESC`
+
+같은 repo에 대해 동시에 두 API를 호출하면 서로 다른 `commit_sha`를 반환할 수 있었다.
+
+**Decision**:
+`commit` 쿼리 파라미터 미지정 시 `repo_head(repo_id, repos.default_branch)` 행의 `index_id`를 사용한다.
+- `repo_head` 행이 없거나 `index_id IS NULL` → `404 index_not_found` (detail에 default branch 포함)
+- `repos.default_branch`는 `NOT NULL DEFAULT 'main'`이므로 400 분기 불필요
+- 공통 helper `resolveCommit()` (`packages/core-service/src/services/commit-resolver.ts`)로 구현
+
+**Consequences**:
+- 세 엔드포인트 모두 commit-less 호출 시 동일한 `commit_sha` 반환 (P1 해결)
+- MCP client (`mcp-server/src/client.ts`)에서 `commit` optional, `branch` 미지원 → default branch index만 반환
+- Upload 경로에서 `branch` 누락 시 `repo_head` 미채움 → commit-less 조회 실패 (404). 향후 `upload.ts`의 `branch` 필수화가 필요 (별도 ADR)
+- `branch` 쿼리 파라미터 지원은 후속 확장으로 분리
+
+**참조**:
+- `docs/reviews/architecture-review-2026-04-17.md` P1
+- `packages/core-service/src/services/commit-resolver.ts`
+- ADR-014 (source.zip + `read_symbol_body` 설계)

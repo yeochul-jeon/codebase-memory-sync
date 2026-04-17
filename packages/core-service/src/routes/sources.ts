@@ -1,9 +1,9 @@
 import type { FastifyInstance, FastifyRequest, FastifyReply } from "fastify";
 import { getPool } from "../storage/postgres.js";
 import { getSourceZipEntry } from "../storage/minio.js";
+import { parseRepo, resolveCommit } from "../services/commit-resolver.js";
 
 interface SymbolRow {
-  source_blob_key: string | null;
   file_path: string;
   body_start_line: number | null;
   body_start_col: number | null;
@@ -47,55 +47,24 @@ export async function sourcesRoutes(app: FastifyInstance): Promise<void> {
         });
       }
 
-      const slashIdx = repo.indexOf("/");
-      if (slashIdx === -1) {
+      const parsed = parseRepo(repo);
+      if (!parsed) {
         return reply.status(400).send({ error: "invalid_repo", detail: "repo must be 'org/name'" });
       }
-      const org = repo.slice(0, slashIdx);
-      const name = repo.slice(slashIdx + 1);
+      const { org, name } = parsed;
 
       const pool = getPool();
-
-      // Resolve repo + index
-      let sourceBlobKey: string | null = null;
-      let resolvedCommit: string;
-
-      if (commit) {
-        const row = await pool.query<{ source_blob_key: string | null; commit_sha: string }>(
-          `SELECT i.source_blob_key, i.commit_sha
-           FROM indexes i
-           JOIN repos r ON r.id = i.repo_id
-           WHERE r.org = $1 AND r.name = $2 AND i.commit_sha = $3 AND i.status = 'ready'
-           LIMIT 1`,
-          [org, name, commit]
-        );
-        if (row.rows.length === 0) {
-          return reply.status(404).send({ error: "index_not_found" });
-        }
-        sourceBlobKey = row.rows[0]!.source_blob_key;
-        resolvedCommit = row.rows[0]!.commit_sha;
-      } else {
-        const row = await pool.query<{ source_blob_key: string | null; commit_sha: string }>(
-          `SELECT i.source_blob_key, i.commit_sha
-           FROM repo_head rh
-           JOIN repos r ON r.id = rh.repo_id
-           JOIN indexes i ON i.id = rh.index_id
-           WHERE r.org = $1 AND r.name = $2 AND i.status = 'ready'
-           LIMIT 1`,
-          [org, name]
-        );
-        if (row.rows.length === 0) {
-          return reply.status(404).send({ error: "index_not_found" });
-        }
-        sourceBlobKey = row.rows[0]!.source_blob_key;
-        resolvedCommit = row.rows[0]!.commit_sha;
+      const r = await resolveCommit(pool, { org, name, commit });
+      if (!r.ok) {
+        return reply.status(r.error.status).send({ error: r.error.code, detail: r.error.detail });
       }
+      const { commitSha, sourceBlobKey } = r.value;
 
       if (!sourceBlobKey) {
         return reply.status(404).send({
           error: "source_not_available",
           detail: "This index was uploaded by a client uploader. Source is only retained for CI uploads.",
-          hint: `Trigger a CI build for commit ${resolvedCommit!} to make source available.`,
+          hint: `Trigger a CI build for commit ${commitSha} to make source available.`,
         });
       }
 
@@ -109,7 +78,7 @@ export async function sourcesRoutes(app: FastifyInstance): Promise<void> {
 
       return reply.send({
         repo,
-        commit_sha: resolvedCommit!,
+        commit_sha: commitSha,
         file_path: filePath,
         start_line: startLine,
         end_line: endLine,
@@ -130,64 +99,40 @@ export async function sourcesRoutes(app: FastifyInstance): Promise<void> {
       if (!scipSymbol) return reply.status(400).send({ error: "missing_scip_symbol" });
       if (!repo) return reply.status(400).send({ error: "missing_repo" });
 
-      const slashIdx = repo.indexOf("/");
-      if (slashIdx === -1) {
+      const parsed = parseRepo(repo);
+      if (!parsed) {
         return reply.status(400).send({ error: "invalid_repo" });
       }
-      const org = repo.slice(0, slashIdx);
-      const name = repo.slice(slashIdx + 1);
+      const { org, name } = parsed;
 
       const pool = getPool();
-
-      let row: SymbolRow | undefined;
-      let resolvedCommit: string;
-
-      if (commit) {
-        const res = await pool.query<SymbolRow & { commit_sha: string }>(
-          `SELECT i.source_blob_key, s.file_path,
-                  s.body_start_line, s.body_start_col, s.body_end_line, s.body_end_col,
-                  s.start_line, i.commit_sha
-           FROM symbols s
-           JOIN indexes i ON i.id = s.index_id AND i.status = 'ready'
-           JOIN repos r ON r.id = i.repo_id
-           WHERE r.org = $1 AND r.name = $2 AND s.scip_symbol = $3 AND i.commit_sha = $4
-           LIMIT 1`,
-          [org, name, scipSymbol, commit]
-        );
-        if (res.rows.length === 0) {
-          return reply.status(404).send({ error: "symbol_not_found" });
-        }
-        row = res.rows[0]!;
-        resolvedCommit = res.rows[0]!.commit_sha;
-      } else {
-        const res = await pool.query<SymbolRow & { commit_sha: string }>(
-          `SELECT i.source_blob_key, s.file_path,
-                  s.body_start_line, s.body_start_col, s.body_end_line, s.body_end_col,
-                  s.start_line, i.commit_sha
-           FROM symbols s
-           JOIN indexes i ON i.id = s.index_id AND i.status = 'ready'
-           JOIN repos r ON r.id = i.repo_id
-           WHERE r.org = $1 AND r.name = $2 AND s.scip_symbol = $3
-           ORDER BY i.created_at DESC
-           LIMIT 1`,
-          [org, name, scipSymbol]
-        );
-        if (res.rows.length === 0) {
-          return reply.status(404).send({ error: "symbol_not_found" });
-        }
-        row = res.rows[0]!;
-        resolvedCommit = res.rows[0]!.commit_sha;
+      const r = await resolveCommit(pool, { org, name, commit });
+      if (!r.ok) {
+        return reply.status(r.error.status).send({ error: r.error.code, detail: r.error.detail });
       }
+      const { indexId, commitSha, sourceBlobKey } = r.value;
 
-      if (!row.source_blob_key) {
+      const symRes = await pool.query<SymbolRow>(
+        `SELECT file_path, body_start_line, body_start_col, body_end_line, body_end_col, start_line
+         FROM symbols
+         WHERE index_id = $1 AND scip_symbol = $2
+         LIMIT 1`,
+        [indexId, scipSymbol]
+      );
+      if (symRes.rows.length === 0) {
+        return reply.status(404).send({ error: "symbol_not_found" });
+      }
+      const row = symRes.rows[0]!;
+
+      if (!sourceBlobKey) {
         return reply.status(404).send({
           error: "source_not_available",
           detail: "Source is only available for CI-indexed commits.",
-          hint: `Trigger a CI build for commit ${resolvedCommit!}.`,
+          hint: `Trigger a CI build for commit ${commitSha}.`,
         });
       }
 
-      const fileBuffer = await getSourceZipEntry(row.source_blob_key, row.file_path);
+      const fileBuffer = await getSourceZipEntry(sourceBlobKey, row.file_path);
       if (!fileBuffer) {
         return reply.status(404).send({ error: "file_not_found_in_source" });
       }
@@ -212,7 +157,7 @@ export async function sourcesRoutes(app: FastifyInstance): Promise<void> {
 
       return reply.send({
         repo,
-        commit_sha: resolvedCommit!,
+        commit_sha: commitSha,
         scip_symbol: scipSymbol,
         file_path: row.file_path,
         start_line: bodyStartLine,
