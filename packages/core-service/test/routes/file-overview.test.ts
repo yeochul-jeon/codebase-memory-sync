@@ -221,4 +221,16 @@ describe("GET /v1/files/overview", () => {
     expect(res.statusCode).toBe(200);
     expect(res.json<{ commit_sha: string }>().commit_sha).toBe(TEST_COMMIT);
   });
+
+  it("resolves commit by branch param", async () => {
+    if (!available) { console.warn("Skipping — Postgres not available"); return; }
+    // feature branch → NEWER_COMMIT_FO (seeded in beforeAll)
+    const url =
+      `/v1/files/overview?repo=${TEST_ORG}/${TEST_REPO}` +
+      `&file_path=${encodeURIComponent(TEST_FILE)}` +
+      `&branch=feature`;
+    const res = await app.inject({ method: "GET", url });
+    expect(res.statusCode).toBe(200);
+    expect(res.json<{ commit_sha: string }>().commit_sha).toBe(NEWER_COMMIT_FO);
+  });
 });

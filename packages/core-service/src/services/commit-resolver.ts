@@ -28,9 +28,11 @@ export function parseRepo(repo: string): { org: string; name: string } | null {
 
 export async function resolveCommit(
   pool: Pool,
-  args: { org: string; name: string; commit: string | undefined }
+  args: { org: string; name: string; commit: string | undefined; branch?: string }
 ): Promise<ResolveCommitResult> {
-  const { org, name, commit } = args;
+  const { org, name, commit, branch } = args;
+  const normalizedCommit = commit?.trim() || undefined;
+  const normalizedBranch = branch?.trim() || undefined;
 
   const repoRes = await pool.query<{ id: string; default_branch: string }>(
     `SELECT id, default_branch FROM repos WHERE org = $1 AND name = $2`,
@@ -44,7 +46,7 @@ export async function resolveCommit(
   }
   const { id: repoId, default_branch: defaultBranch } = repoRes.rows[0]!;
 
-  if (commit) {
+  if (normalizedCommit) {
     const ixRes = await pool.query<{
       id: string;
       commit_sha: string;
@@ -54,7 +56,7 @@ export async function resolveCommit(
        FROM indexes
        WHERE repo_id = $1 AND commit_sha = $2 AND status = 'ready'
        LIMIT 1`,
-      [repoId, commit]
+      [repoId, normalizedCommit]
     );
     if (ixRes.rows.length === 0) {
       return {
@@ -62,7 +64,7 @@ export async function resolveCommit(
         error: {
           code: "index_not_found",
           status: 404,
-          detail: `No ready index for ${org}/${name}@${commit}`,
+          detail: `No ready index for ${org}/${name}@${normalizedCommit}`,
         },
       };
     }
@@ -79,7 +81,8 @@ export async function resolveCommit(
     };
   }
 
-  // commit omitted: resolve via repo_head(default_branch)
+  // commit omitted: resolve via repo_head(branch ?? defaultBranch)
+  const targetBranch = normalizedBranch ?? defaultBranch;
   const headRes = await pool.query<{
     id: string;
     commit_sha: string;
@@ -90,7 +93,7 @@ export async function resolveCommit(
      JOIN indexes i ON i.id = rh.index_id AND i.status = 'ready'
      WHERE rh.repo_id = $1 AND rh.branch = $2
      LIMIT 1`,
-    [repoId, defaultBranch]
+    [repoId, targetBranch]
   );
   if (headRes.rows.length === 0) {
     return {
@@ -98,7 +101,7 @@ export async function resolveCommit(
       error: {
         code: "index_not_found",
         status: 404,
-        detail: `No ready index for ${org}/${name} on default branch '${defaultBranch}'`,
+        detail: `No ready index for ${org}/${name} on branch '${targetBranch}'`,
       },
     };
   }

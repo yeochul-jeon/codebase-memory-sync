@@ -8,9 +8,10 @@ export async function fileOverviewRoutes(app: FastifyInstance): Promise<void> {
       repo?: string;
       file_path?: string;
       commit?: string;
+      branch?: string;
     };
   }>("/v1/files/overview", async (request, reply) => {
-    const { repo, file_path, commit } = request.query;
+    const { repo, file_path, commit, branch } = request.query;
 
     if (!repo || repo.trim().length === 0) {
       return reply.status(400).send({
@@ -36,7 +37,7 @@ export async function fileOverviewRoutes(app: FastifyInstance): Promise<void> {
     const { org, name } = parsed;
 
     const pool = getPool();
-    const r = await resolveCommit(pool, { org, name, commit: commit?.trim() });
+    const r = await resolveCommit(pool, { org, name, commit, ...(branch !== undefined ? { branch } : {}) });
     if (!r.ok) {
       return reply.status(r.error.status).send({ error: r.error.code, detail: r.error.detail });
     }

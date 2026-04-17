@@ -22,6 +22,7 @@ vi.mock("../../src/storage/minio.js", () => ({
 
 import { buildApp } from "../helpers/build-app.js";
 import { sourcesRoutes } from "../../src/routes/sources.js";
+import { getSourceZipEntry } from "../../src/storage/minio.js";
 
 const DB_CONFIG = {
   host: process.env["POSTGRES_HOST"] ?? "localhost",
@@ -431,5 +432,36 @@ describe("commit omission semantics", () => {
     expect(json.detail!).toContain("'main'");
 
     await pool.query("DELETE FROM repos WHERE org = $1 AND name = $2", [noHeadOrg, noHeadRepo]);
+  });
+});
+
+describe("branch param", () => {
+  it("GET /v1/sources/file resolves commit from branch param", async () => {
+    if (!available) { console.warn("Skipping — Postgres not available"); return; }
+    const mockFileBuffer = Buffer.from(JAVA_CONTENT, "utf8");
+    vi.mocked(getSourceZipEntry).mockResolvedValueOnce(mockFileBuffer);
+
+    const url =
+      `/v1/sources/file?repo=${TEST_ORG}/${TEST_REPO}` +
+      `&file_path=${encodeURIComponent("src/Foo.java")}` +
+      `&start_line=1&end_line=3` +
+      `&branch=feature`;
+    const res = await app.inject({ method: "GET", url });
+    expect(res.statusCode).toBe(200);
+    expect(res.json<{ commit_sha: string }>().commit_sha).toBe(NEWER_COMMIT);
+  });
+
+  it("GET /v1/sources/symbol resolves commit from branch param", async () => {
+    if (!available) { console.warn("Skipping — Postgres not available"); return; }
+    const mockFileBuffer = Buffer.from(JAVA_CONTENT, "utf8");
+    vi.mocked(getSourceZipEntry).mockResolvedValueOnce(mockFileBuffer);
+
+    const url =
+      `/v1/sources/symbol?repo=${TEST_ORG}/${TEST_REPO}` +
+      `&scip_symbol=${encodeURIComponent(TEST_SYMBOL)}` +
+      `&branch=feature`;
+    const res = await app.inject({ method: "GET", url });
+    expect(res.statusCode).toBe(200);
+    expect(res.json<{ commit_sha: string }>().commit_sha).toBe(NEWER_COMMIT);
   });
 });

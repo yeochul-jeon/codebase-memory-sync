@@ -28,6 +28,7 @@ export async function sourcesRoutes(app: FastifyInstance): Promise<void> {
       const q = request.query as Record<string, string>;
       const repo = q["repo"];
       const commit = q["commit"];
+      const branch = q["branch"];
       const filePath = q["file_path"];
       const startLine = q["start_line"] ? parseInt(q["start_line"]!, 10) : undefined;
       const endLine = q["end_line"] ? parseInt(q["end_line"]!, 10) : undefined;
@@ -54,7 +55,7 @@ export async function sourcesRoutes(app: FastifyInstance): Promise<void> {
       const { org, name } = parsed;
 
       const pool = getPool();
-      const r = await resolveCommit(pool, { org, name, commit });
+      const r = await resolveCommit(pool, { org, name, commit, ...(branch !== undefined ? { branch } : {}) });
       if (!r.ok) {
         return reply.status(r.error.status).send({ error: r.error.code, detail: r.error.detail });
       }
@@ -95,6 +96,7 @@ export async function sourcesRoutes(app: FastifyInstance): Promise<void> {
       const scipSymbol = q["scip_symbol"];
       const repo = q["repo"];
       const commit = q["commit"];
+      const branch = q["branch"];
 
       if (!scipSymbol) return reply.status(400).send({ error: "missing_scip_symbol" });
       if (!repo) return reply.status(400).send({ error: "missing_repo" });
@@ -106,7 +108,7 @@ export async function sourcesRoutes(app: FastifyInstance): Promise<void> {
       const { org, name } = parsed;
 
       const pool = getPool();
-      const r = await resolveCommit(pool, { org, name, commit });
+      const r = await resolveCommit(pool, { org, name, commit, ...(branch !== undefined ? { branch } : {}) });
       if (!r.ok) {
         return reply.status(r.error.status).send({ error: r.error.code, detail: r.error.detail });
       }
