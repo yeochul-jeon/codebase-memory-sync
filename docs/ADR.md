@@ -206,7 +206,54 @@ MVP 속도 최우선. 외부 의존성 최소화 (상용 제품 제외, OSS + �
 - 파일당 2MB 초과 시 스킵. 총 업로드 cap: `MAX_SOURCE_SIZE_MB=200`
 
 **트레이드오프**:
-- commit당 `.scip`보다 2–5배 큰 blob 추가 → 저장 비용 선형 증가. `repo_head` commit은 무기한 보존, 그 외 CI commit은 마지막 20개만 보존하는 기본 원칙을 적용하고 실측 후 ADR-015(Retention/GC)로 구체화
+- commit당 `.scip`보다 2–5배 큰 blob 추가 → 저장 비용 선형 증가. `repo_head` commit은 무기한 보존, 그 외 CI commit은 마지막 20개만 보존하는 기본 원칙을 적용하고 실측 후 ADR-016(Retention/GC)로 구체화
 - 대형 monorepo는 200MB cap에 근접할 수 있음 — exclusion 패턴으로 완화
 - Client uploader는 `read_symbol_body` 대상 아님 (명시적 tradeoff, CI-primary 철학 정합)
 - `enclosing_range` 채움 여부는 indexer 의존: `scip-java`/`scip-typescript`는 정상 채움, `scip-ctags`는 미지원 → identifier range ±10라인 fallback, `body_source: "identifier_fallback"` 플래그로 출력에 명시
+
+---
+
+### ADR-015: Primary Store 유지 — PostgreSQL + MinIO 중심 구조 확정 및 점진 확장 정책
+
+**결정**: CMS의 primary store를 **PostgreSQL + MinIO로 유지**한다. 벡터 DB와 그래프 DB는 primary를 대체하지 않고, 수요가 검증된 시점에 **파생 projection plane**으로 점진 추가한다.
+
+**배경 및 검토 과정**:
+- `docs/research/storage-alternatives.md` — 해외 7개 사례(Sourcegraph/GitHub Blackbird/Google Kythe/Meta Glean/CodeQL/Cursor/Continue.dev) 조사 완료
+- `docs/research/storage-direction-vector-graph-options-2026-04-17.md` — 3가지 옵션 비교 및 권고안 작성
+- 검토 옵션: (A) Postgres 유지, (B) 벡터+그래프 primary 전환, (C) Graphify Projection(파생 projection)
+
+**이유**:
+- 현재 핵심 기능은 precise symbol definition/reference 조회 및 commit 스냅샷 정합성이다. 이 요건은 PostgreSQL이 가장 안정적으로 충족한다.
+- 벡터를 primary로 올리면 exact symbol identity의 canonical 보장이 약해지고, commit 단위 snapshot 격리가 어려워진다.
+- 그래프를 primary로 올리면 노드·엣지 versioning이 핵심 난제가 되고, ingest 파이프라인 복잡도가 급증한다.
+- `symbol_relationships` + recursive CTE는 현 규모(심볼 < 50만, 레포 < 1,000)에서 충분히 유효하다.
+- ADR-001 철학("MVP 속도 최우선, 복잡성은 실제로 필요할 때 추가") 정합.
+
+**역할 분리 원칙**:
+- **벡터**: "정답 저장소"가 아닌 "후보군 생성기" — semantic retrieval plane으로만 사용
+- **그래프**: primary 교체가 아닌 파생 projection — multi-hop query plane으로만 사용
+- **PostgreSQL**: exact symbol lookup, commit 정합성, 시스템 레코드의 단일 진실(source of truth)
+
+**점진 확장 시나리오 (트리거 기반)**:
+
+| Phase | 내용 | 전환 트리거 |
+|---|---|---|
+| Phase 1 (현재) | PostgreSQL + MinIO 유지. 업로드 정합성·GC·source 조회 정책 정리 | 해당 없음 |
+| Phase 2 | 텍스트 검색 plane 분리 (Zoekt 또는 Meilisearch) | FTS P99 > 300ms 지속 또는 레포 > 1,000개 |
+| Phase 3 | pgvector 익스텐션 추가 — semantic retrieval plane | MCP에서 자연어/유사 코드 쿼리 요건 첫 발생 |
+| Phase 4 | graph projection 실험 (PostgreSQL materialized view → 이후 Neo4j 검토) | 멀티홉 CTE P99 > 2초 지속 또는 cross-language graph 수요 |
+
+**트레이드오프**:
+- FTS 품질과 확장성의 한계는 Phase 2 전환 전까지 남는다. 심볼 50만 개·레포 1,000개 이하에서는 실용적으로 허용 가능하다.
+- semantic retrieval 불가는 Phase 3 전까지 AI 에이전트 컨텍스트 품질의 상한을 제한한다.
+- graph query 성능은 3–4홉 이하, 관계 레코드 수백만 건 이하에서 recursive CTE로 충분하다.
+
+**미결 후속 ADR**:
+- ADR-016 — source blob Retention/GC 정책 (Phase 1 완료 후)
+- ADR-017 — 텍스트 검색 plane 분리 기술 선택 (Phase 2 트리거 도달 시)
+- ADR-018 — Leiden 클러스터링 기반 `get_symbol_community` MCP tool (Phase 2 이후)
+- ADR-019 — pgvector semantic retrieval plane 설계 (Phase 3 트리거 도달 시)
+
+**참조**:
+- `docs/research/storage-alternatives.md`
+- `docs/research/storage-direction-vector-graph-options-2026-04-17.md`
